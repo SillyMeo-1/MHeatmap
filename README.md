@@ -5,8 +5,8 @@
 
 **Funscript Heatmap Generator** — a small desktop app that turns `.funscript`
 files into one row-per-axis heatmap (filename banner, speed stats, heat band,
-speed curve), with axis selection, five palettes, adjustable background opacity
-and an optional multi-axis `.funscript` export.
+speed curve), with axis selection, an adjustable background opacity and an
+optional multi-axis `.funscript` export.
 
 English + 中文 UI. **English by default**; the first launch asks which language
 you want, and you can switch anytime from the top bar.
@@ -29,11 +29,11 @@ py -3 app.py
 
 ## Screenshots
 
-| First launch | 中文界面 | Axis + palette + opacity |
+| First launch | 中文界面 | Axis pills + opacity |
 |---|---|---|
 | ![language](shots/first-run-language.png) | ![中文](shots/ui-chinese.png) | ![controls](shots/ui-v1.2.png) |
 
-
+## Layout
 
 ```
 MHeatmap/
@@ -119,7 +119,7 @@ Dropping a single file also picks up its sibling axes.
 
 - `<group>_Axes.png` — solid background (100 %).
 - `<group>_Axes_bg<value>.png` — any other background opacity (0 = transparent).
-- `<group>_merged.funscript` — when “Also export one multi-axis .funscript” is on.
+- `<group>_merged.funscript` — when the “Merge .funscript” button is pressed.
 
 Default width 1380 px, row height 104 px, so six axes give a 1380×628 image
 (fewer selected axes → shorter image).
@@ -130,9 +130,47 @@ Default width 1380 px, row height 104 px, so six axes give a 1380×628 image
 py -3 tools/run_checks.py
 ```
 
-Covers parsing/grouping, render geometry, alpha channel behaviour, the bilingual
-string table and the real Tk flow (preview → transparent preview → save → switch
-language).
+Covers parsing/grouping, render geometry, background-alpha behaviour, axis
+filtering, the merged funscript structure, curve colours (holding segments must
+stay cyan, never black), clipboard formats (CF_DIB + PNG), the bilingual string
+table and the real Tk flow (preview → save → copy → merge → switch language).
+
+## Changelog
+
+### 1.2.2 — curve colour fix
+
+- The speed curve was drawing with the *heat* palette, whose zero value is black and
+  whose upper half is dark — flat/holding sections came out as black lines. It now
+  uses the dedicated cyan ramp: holding = cyan, movement = green/yellow, fast = red/purple.
+- Regression check: a script made of holding segments must render cyan curve pixels.
+
+### 1.2.1 — heatmap colours matched to the reference
+
+- Constant opaque heat band (alpha 212) instead of an intensity-scaled one, so slow
+  segments stay as saturated as fast ones.
+- Linear palette lookup (no smoothstep), pure-black canvas, hard 40 px band edge with
+  a 21 % tail, thicker (2 px) curve.
+- The preview re-fits once the layout settles, so it never starts out cropped.
+
+### 1.2.0 — interactive UI, clipboard, standalone merge
+
+- New UI: rounded canvas buttons and pills with hover/press feedback, card layout,
+  mint accent, pulsing status dot, toast messages, double-click-to-fit preview.
+- **Copy image** button / `Ctrl+C` — clipboard gets CF_DIB **and** PNG.
+- **Merge .funscript** is its own button (`Ctrl+M`) and no longer requires generating PNGs.
+- Palette selector removed; back to the single OFS ramp.
+
+### 1.1.0 — axis picking, opacity, merged export
+
+- Axis pills (L0…R2): draw only the selected axes, image height follows.
+- Background opacity slider 0–100 % with `_bg<value>` output suffix.
+- Single-file multi-axis export (funscript 1.1 `axes` array) for MultiFunPlayer-style players.
+- Five palettes (OFS / Classic / Inferno / Viridis / Grayscale) — removed again in 1.2.0.
+
+### 1.0.0 — first public release
+
+- Row-per-axis heatmap, bilingual UI with first-run language picker, drag & drop,
+  transparent PNG, single-file Windows exe.
 
 ## Notes
 
