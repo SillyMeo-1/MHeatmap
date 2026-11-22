@@ -131,40 +131,31 @@ table and the real Tk flow (preview → save → copy → merge → switch langu
 
 ## Changelog
 
-### 1.2.2 — curve colour fix
+### 1.2.2 (latest)
 
-- The speed curve was drawing with the *heat* palette, whose zero value is black and
-  whose upper half is dark — flat/holding sections came out as black lines. It now
-  uses the dedicated cyan ramp: holding = cyan, movement = green/yellow, fast = red/purple.
-- Regression check: a script made of holding segments must render cyan curve pixels.
+Changes since 1.0.0:
 
-### 1.2.1 — heatmap colours matched to the reference
+- **Heatmap style** — constant opaque band (alpha 212) so slow segments keep their
+  colour, linear palette lookup, pure-black canvas, a hard 40 px band edge with a
+  21 % tail, and a 2 px speed curve.
+- **Curve colours** — the curve uses the cyan speed ramp: holding = cyan,
+  movement = green/yellow, fast = red/purple. Holding sections used to be drawn
+  black.
+- **Axis selection** — toggle the L0…R2 pills; only the chosen axes are drawn and
+  the image height follows.
+- **Background opacity** — slider 0–100 %; output names carry `_bg<value>` when it
+  is not 100.
+- **Copy image** (`Ctrl+C`) — the clipboard receives CF_DIB and PNG.
+- **Merge .funscript** (`Ctrl+M`) — writes the single-file multi-axis script
+  (funscript 1.1) without generating any PNG.
+- **New UI** — rounded pills with hover/press feedback, card layout, pulsing status
+  dot, toast messages, double-click-to-fit preview.
+- Single OFS palette; English + 中文 with a first-run language picker.
 
-- Constant opaque heat band (alpha 212) instead of an intensity-scaled one, so slow
-  segments stay as saturated as fast ones.
-- Linear palette lookup (no smoothstep), pure-black canvas, hard 40 px band edge with
-  a 21 % tail, thicker (2 px) curve.
-- The preview re-fits once the layout settles, so it never starts out cropped.
+### 1.0.0
 
-### 1.2.0 — interactive UI, clipboard, standalone merge
-
-- New UI: rounded canvas buttons and pills with hover/press feedback, card layout,
-  mint accent, pulsing status dot, toast messages, double-click-to-fit preview.
-- **Copy image** button / `Ctrl+C` — clipboard gets CF_DIB **and** PNG.
-- **Merge .funscript** is its own button (`Ctrl+M`) and no longer requires generating PNGs.
-- Palette selector removed; back to the single OFS ramp.
-
-### 1.1.0 — axis picking, opacity, merged export
-
-- Axis pills (L0…R2): draw only the selected axes, image height follows.
-- Background opacity slider 0–100 % with `_bg<value>` output suffix.
-- Single-file multi-axis export (funscript 1.1 `axes` array) for MultiFunPlayer-style players.
-- Five palettes (OFS / Classic / Inferno / Viridis / Grayscale) — removed again in 1.2.0.
-
-### 1.0.0 — first public release
-
-- Row-per-axis heatmap, bilingual UI with first-run language picker, drag & drop,
-  transparent PNG, single-file Windows exe.
+- First public release: row-per-axis heatmap, bilingual UI with first-run language
+  picker, drag & drop, transparent PNG, single-file Windows exe.
 
 ## Notes
 

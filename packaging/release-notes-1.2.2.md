@@ -1,28 +1,31 @@
 MHeatmap 1.2.2 — curve colour fix
 =================================
 
-What was wrong
---------------
-
-The speed curve was passed the *heat* palette instead of the cyan curve ramp.
-The heat palette is black at zero intensity and dark from 0.4 upwards, so any
-flat/holding section of a script drew a **black line** (and fast sections drew
-dark olive/teal) — exactly the “some lines turned black” report.
-
 Fix
 ---
 
-- `draw_curve` now always uses the dedicated curve ramp (the original
-  LINE_COLOR_STOPS: cyan → green → yellow → red → purple), so:
-  - zero-speed / holding segments are **cyan**,
-  - normal movement is green/yellow,
-  - only really fast segments go red/purple.
-- Added a regression check: a script made of holding segments must produce
-  cyan curve pixels, never black ones.
+The speed curve was drawing with the *heat* palette, whose zero value is black and
+whose upper half is dark, so flat/holding sections came out as **black lines**. It
+now uses the dedicated cyan ramp: holding = cyan, movement = green/yellow, fast =
+red/purple.
 
-Still in place from 1.2.1
--------------------------
+Also in this version (since 1.0.0)
+----------------------------------
 
-Opaque heat band (212 alpha), linear palette lookup, pure-black canvas, hard
-40 px band edge with a 21 % tail, 2 px curve. Copy-to-clipboard, standalone
-merge, single OFS palette, background-opacity slider, axis pills, EN/中文.
+- Constant opaque heat band (alpha 212), linear palette lookup, pure-black canvas,
+  hard 40 px band edge with a 21 % tail, 2 px speed curve.
+- Axis pills (L0…R2): draw only the selected axes, image height follows.
+- Background opacity slider 0–100 % with `_bg<value>` output suffix.
+- Copy image button / `Ctrl+C` — clipboard gets CF_DIB **and** PNG.
+- Merge .funscript button / `Ctrl+M` — single-file multi-axis funscript
+  (version 1.1, `actions` + `axes`), no PNG generated.
+- New UI: rounded pills with hover/press feedback, card layout, pulsing status dot,
+  toast messages, double-click-to-fit preview.
+- Single OFS palette; English + 中文 with first-run language picker.
+
+Install (Windows)
+-----------------
+
+1. Download `MHeatmap.zip`, unpack it anywhere.
+2. Run `MHeatmap.exe`.
+3. If SmartScreen shows up: *More info → Run anyway* (unsigned exe, normal).
