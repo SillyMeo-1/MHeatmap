@@ -5,9 +5,9 @@ from PyInstaller.utils.win32.versioninfo import (
 )
 
 app_name = "MHeatmap"
-release_version = "1.2.0"
+release_version = "1.2.1"
 fixed = FixedFileInfo(
-    filevers=(1, 2, 0, 0), prodvers=(1, 2, 0, 0), mask=0x3f, flags=0,
+    filevers=(1, 2, 1, 0), prodvers=(1, 2, 1, 0), mask=0x3f, flags=0,
     OS=0x40004, fileType=1, subtype=0, date=(0, 0),
 )
 version = VSVersionInfo(

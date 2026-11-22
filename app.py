@@ -38,7 +38,7 @@ except Exception:  # noqa: BLE001
     HAS_DND = False
 
 APP_TITLE = "MHeatmap"
-UI_VERSION = "1.2"
+UI_VERSION = "1.2.1"
 
 # ---------------------------------------------------------------- theme
 BG = "#0e1116"

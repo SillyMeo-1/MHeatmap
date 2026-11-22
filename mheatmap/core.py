@@ -17,7 +17,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 APP_NAME = "MHeatmap"
-VERSION = "1.2"
+VERSION = "1.2.1"
 
 # ------------------------------------------------------------------ geometry
 TOP_MARGIN = 4
@@ -32,7 +32,8 @@ MIN_WIDTH = 640
 MAX_WIDTH = 4096
 DEFAULT_WIDTH = 1380
 DEFAULT_MAX_SPEED = 2000.0
-BAND_ALPHA_BOOST = 1.35
+BAND_ALPHA = 212          # 色带主体固定不透明度（参考图实测 202）
+BAND_TAIL_ALPHA = 0.21    # 色带底部 16 行的不透明度比例
 
 # ------------------------------------------------------------------ axes
 # (name, label colour, filename tokens)
@@ -365,8 +366,7 @@ def draw_band(image, actions, duration_ms, x, y, width, max_speed, stops=OFS_STO
             columns.append((0, 0, 0, 0))
             continue
         color = color_at(clamp(intensity ** gamma, 0.0, 1.0), stops)
-        alpha = int(round((92 + 118 * math.sqrt(intensity)) * BAND_ALPHA_BOOST))
-        columns.append((color[0], color[1], color[2], min(255, alpha)))
+        columns.append((color[0], color[1], color[2], BAND_ALPHA))
 
     data = []
     tail = max(1, BAND_HEIGHT - BAND_SOLID - 1)
@@ -402,7 +402,7 @@ def draw_curve(image, actions, duration_ms, x, y, width, height, max_speed,
             continue
         speed = abs(p1 - p0) * 1000.0 / delta
         rgb = color_at(clamp(speed / max_speed, 0.0, 1.0), stops)
-        draw.line((point((a0, p0)), point((a1, p1))), fill=(*rgb, 190), width=scale)
+        draw.line((point((a0, p0)), point((a1, p1))), fill=(*rgb, 215), width=scale * 2)
     overlay = overlay.resize((width, height), Image.LANCZOS)
     image.alpha_composite(overlay, (x, y))
 
@@ -424,7 +424,7 @@ def render_group(axes: dict[str, Path], width: int = DEFAULT_WIDTH, bg_opacity: 
     width = int(clamp(int(width), MIN_WIDTH, MAX_WIDTH))
     height = TOP_MARGIN + ROW_HEIGHT * len(rows)
     bg_alpha = int(clamp(int(bg_opacity), 0, 100) * 255 // 100)
-    image = Image.new("RGBA", (width, height), (18, 18, 18, bg_alpha))
+    image = Image.new("RGBA", (width, height), (0, 0, 0, bg_alpha))
     draw = ImageDraw.Draw(image)
     plot_x = AXIS_COLUMN
     plot_w = width - plot_x - RIGHT_PAD
@@ -446,7 +446,7 @@ def render_group(axes: dict[str, Path], width: int = DEFAULT_WIDTH, bg_opacity: 
         use_duration = duration or axis_duration
 
         if bg_alpha:
-            draw.rectangle((0, y, width, y + ROW_HEIGHT), fill=(24, 24, 24, bg_alpha))
+            draw.rectangle((0, y, width, y + ROW_HEIGHT), fill=(0, 0, 0, bg_alpha))
         draw.rectangle((0, y, plot_x, y + ROW_HEIGHT), fill=(*axis_colour, 255))
         font_axis = load_font(56)
         while font_axis.size > 18 and draw.textlength(axis_name, font=font_axis) > plot_x - 10:
