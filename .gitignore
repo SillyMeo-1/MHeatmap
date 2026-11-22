@@ -1,0 +1,20 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# --- build output ---
+build/
+dist/
+*.spec.bak
+
+# --- local / editor ---
+.vscode/
+.idea/
+*.log
+.DS_Store
+
+# --- generated outputs ---
+heatmaps/

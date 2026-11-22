@@ -1,0 +1,130 @@
+# MHeatmap
+
+**Funscript Heatmap Generator** — a small desktop app that turns `.funscript`
+files into one row-per-axis heatmap (filename banner, speed stats, heat band,
+speed curve), with optional transparent background.
+
+English + 中文 UI. **English by default**; the first launch asks which language
+you want, and you can switch anytime from the top bar.
+
+![English UI](shots/ui-english.png)
+
+## Install (Windows)
+
+1. Download `MHeatmap.zip` from [Releases](../../releases).
+2. Unpack it anywhere and run `MHeatmap.exe` (no installer, no Python).
+3. If Windows says “Windows protected your PC”, choose *More info → Run anyway* —
+   that is the normal prompt for an unsigned exe.
+
+Or run from source (Python 3.10+):
+
+```powershell
+py -3 -m pip install -r requirements.txt
+py -3 app.py
+```
+
+## Screenshots
+
+| First launch | 中文界面 | Transparent |
+|---|---|---|
+| ![language](shots/first-run-language.png) | ![中文](shots/ui-chinese.png) | ![transparent](shots/transparent-preview.png) |
+
+
+```
+MHeatmap/
+├─ app.py                  # Tkinter UI (bilingual, first-run language picker)
+├─ mheatmap/
+│  ├─ core.py              # funscript parsing + rendering (Pillow only)
+│  ├─ i18n.py              # English / 中文 strings
+│  └─ __init__.py
+├─ assets/
+│  ├─ NotoSansCJKsc-Regular.otf   # bundled font (SIL OFL, see OFL.txt)
+│  ├─ OFL.txt
+│  └─ icon.ico
+├─ packaging/README.txt    # readme that goes into the release zip
+├─ tools/
+│  ├─ build_release.ps1    # build exe + zip
+│  ├─ make_sample.py       # six-axis demo scripts for the self test
+│  ├─ run_checks.py        # automated checks
+│  └─ shot.py              # window screenshots (PrintWindow, DPI-safe)
+├─ .github/workflows/build.yml   # CI: test + build exe + release on tag
+├─ MHeatmap.spec           # PyInstaller build
+├─ requirements.txt
+└─ README.md
+```
+
+## Features
+
+- **One image per script set**: every axis gets a row (L0/L1/L2/R0/R1/R2 + vib/pump),
+  with a translucent filename banner (`name.surge.funscript::surge`), Duration /
+  Actions / MaxSpeed / AvgSpeed stats, a heat band and a speed curve.
+- **Transparent background**: PNG keeps the alpha channel, so the heatmap can be
+  laid over video thumbnails or a player UI. Output names get a `_transparent` suffix
+  so the opaque version is not overwritten.
+- **Bilingual UI**, English first. First launch shows a language picker; the choice
+  is stored in `%APPDATA%\MHeatmap\settings.json`.
+- **Drag & drop**: drop files or a folder onto the window (or pass paths on the
+  command line — the app previews them right away).
+- **Batch**: one image per group; the output folder defaults to
+  `<script folder>/heatmaps` and can be changed in the UI.
+- **Minimal UI**: one mode, three settings (width, transparent, output), a preview
+  with zoom/pan, a 4-line log and a status bar.
+
+## Naming
+
+The original request was “M funscript Heatmap Generate”; shortened to **MHeatmap**
+(the “M” is kept, everything else is implied by the subtitle *Funscript Heatmap
+Generator*). It is short enough for an exe name, a window title and a taskbar label.
+
+## Run / build
+
+```powershell
+py -3 -m pip install -r requirements.txt
+py -3 app.py                      # run from source
+py -3 app.py --selftest "D:\path\to\scripts"   # render check without the window
+
+py -3 -m pip install "PyInstaller>=6.11,<7"
+powershell -ExecutionPolicy Bypass -File tools\build_release.ps1
+# -> dist\MHeatmap.exe + dist\MHeatmap.zip
+```
+
+Pushing a `v*` tag triggers the GitHub Actions workflow, which builds the exe on
+`windows-latest` and attaches both files to the release.
+
+## File / axis naming
+
+| Axis | Tokens accepted in the filename |
+|---|---|
+| L0 (stroke) | `.l0`, `.stroke` (also a plain `name.funscript`) |
+| L1 (surge)  | `.l1`, `.surge` |
+| L2 (sway)   | `.l2`, `.sway` |
+| R0 (twist)  | `.r0`, `.twist` |
+| R1 (roll)   | `.r1`, `.roll` |
+| R2 (pitch)  | `.r2`, `.pitch` |
+| vib / pump  | `.vib`, `.pump` |
+
+Scripts in the same folder with the same base name are grouped into one image.
+Dropping a single file also picks up its sibling axes.
+
+## Output
+
+`<group>_Axes.png` (opaque) or `<group>_Axes_transparent.png` (transparent).
+Default width 1380 px, row height 104 px, so six axes give a 1380×628 image.
+
+## Checks
+
+```powershell
+py -3 tools/run_checks.py
+```
+
+Covers parsing/grouping, render geometry, alpha channel behaviour, the bilingual
+string table and the real Tk flow (preview → transparent preview → save → switch
+language).
+
+## Notes
+
+- Rendering was written from scratch for this app (Pillow only); it does not import
+  the original heatmapgen project. The colour tables and row layout are kept
+  compatible so the output looks the same.
+- Bundled font: Noto Sans CJK SC, licensed under the SIL Open Font License —
+  see `assets/OFL.txt`.
