@@ -168,8 +168,5 @@ table and the real Tk flow (preview → save → copy → merge → switch langu
 
 ## Notes
 
-- Rendering was written from scratch for this app (Pillow only); it does not import
-  the original heatmapgen project. The colour tables and row layout are kept
-  compatible so the output looks the same.
 - Bundled font: Noto Sans CJK SC, licensed under the SIL Open Font License —
   see `assets/OFL.txt`.
