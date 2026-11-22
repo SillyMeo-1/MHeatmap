@@ -17,7 +17,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 APP_NAME = "MHeatmap"
-VERSION = "1.1"
+VERSION = "1.2"
 
 # ------------------------------------------------------------------ geometry
 TOP_MARGIN = 4
@@ -84,46 +84,8 @@ OFS_STOPS = (
     (1.000, (87, 70, 0)),
 )
 
-CLASSIC_STOPS = (
-    (0.00, (18, 18, 20)),
-    (0.18, (24, 55, 160)),
-    (0.36, (0, 170, 210)),
-    (0.54, (20, 210, 80)),
-    (0.72, (245, 215, 45)),
-    (0.88, (240, 105, 30)),
-    (1.00, (235, 35, 35)),
-)
-
-INFERNO_STOPS = (
-    (0.00, (0, 0, 4)),
-    (0.15, (22, 11, 57)),
-    (0.30, (66, 10, 104)),
-    (0.45, (106, 23, 110)),
-    (0.60, (147, 38, 103)),
-    (0.75, (188, 55, 84)),
-    (0.90, (228, 86, 45)),
-    (1.00, (252, 255, 164)),
-)
-
-VIRIDIS_STOPS = (
-    (0.00, (68, 1, 84)),
-    (0.25, (59, 82, 139)),
-    (0.50, (33, 145, 140)),
-    (0.75, (94, 201, 98)),
-    (1.00, (253, 231, 37)),
-)
-
-GRAY_STOPS = (
-    (0.00, (0, 0, 0)),
-    (1.00, (255, 255, 255)),
-)
-
 PALETTES = {
     "ofs": ("OFS Rainbow", "OFS 彩虹", OFS_STOPS, 1.0),
-    "classic": ("Classic", "经典", CLASSIC_STOPS, 0.45),
-    "inferno": ("Inferno", "熔岩", INFERNO_STOPS, 0.40),
-    "viridis": ("Viridis", "青绿", VIRIDIS_STOPS, 0.40),
-    "gray": ("Grayscale", "灰度", GRAY_STOPS, 0.42),
 }
 DEFAULT_PALETTE = "ofs"
 

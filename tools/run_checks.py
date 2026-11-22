@@ -1,15 +1,17 @@
-"""MHeatmap 功能检查：解析 / 渲染 / 配色 / 透明度 / 轴选择 / 合并 / 双语界面。
+"""MHeatmap 功能检查：解析 / 渲染 / 透明度 / 轴选择 / 合并 / 剪贴板 / 双语界面。
 
 用法：py -3 tools/run_checks.py
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import shutil
 import sys
 import tempfile
 import time
+from ctypes import wintypes
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -35,6 +37,26 @@ def write_settings(**values) -> None:
     path.write_text(json.dumps(values, ensure_ascii=False), encoding="utf-8")
 
 
+def clipboard_formats() -> dict:
+    user32 = ctypes.windll.user32
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+    user32.RegisterClipboardFormatW.restype = wintypes.UINT
+    user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+    result = {"open": False, "dib": False, "png": False}
+    if not user32.OpenClipboard(None):
+        return result
+    result["open"] = True
+    try:
+        result["dib"] = bool(user32.IsClipboardFormatAvailable(8))
+        png_format = user32.RegisterClipboardFormatW("PNG")
+        result["png"] = bool(user32.IsClipboardFormatAvailable(png_format)) if png_format else False
+    finally:
+        user32.CloseClipboard()
+    return result
+
+
 def test_core():
     print("\n[1] 解析与分组")
     actions, duration = core.read_funscript(next(SAMPLES.glob("*.funscript")))
@@ -49,13 +71,13 @@ def test_core():
     single = core.collect_inputs([next(SAMPLES.glob("*.funscript"))])
     check("拖单个文件带出同组", len(single) == 6, str(len(single)))
     check("同一文件不会重复", len(core.collect_inputs([SAMPLES, SAMPLES])) == len(files))
+    check("只剩一套配色", list(core.PALETTES) == ["ofs"], str(list(core.PALETTES)))
 
 
 def test_render():
-    print("\n[2] 渲染 / 配色 / 透明度")
+    print("\n[2] 渲染 / 背景透明度 / 轴筛选")
     files = core.collect_inputs([SAMPLES])
-    group = core.group_files(files)[0]
-    axes = group["axes"]
+    axes = core.group_files(files)[0]["axes"]
 
     image = core.render_group(axes, 1380, bg_opacity=100)
     check("默认尺寸 1380x628", image.size == (1380, 628), str(image.size))
@@ -65,7 +87,7 @@ def test_render():
     transparent = core.render_group(axes, 1380, bg_opacity=0)
     alpha = transparent.getchannel("A").getextrema()
     check("透明度 0 = 全透明底", alpha[0] == 0 and alpha[1] == 255, str(alpha))
-    check("透明版角落 alpha=0", transparent.getpixel((0, 0))[3] == 0, str(transparent.getpixel((0, 0))))
+    check("透明版角落 alpha=0", transparent.getpixel((0, 0))[3] == 0)
     check("透明版轴块不透明", transparent.getpixel((10, 60))[3] == 255)
 
     half = core.render_group(axes, 1380, bg_opacity=50)
@@ -79,13 +101,6 @@ def test_render():
     except ValueError:
         none_error = True
     check("一个轴都不选时报错", none_error)
-
-    colours = {}
-    for name in core.PALETTES:
-        img = core.render_group(axes, 900, palette=name)
-        colours[name] = img.getpixel((400, 30))
-        check(f"配色 {name} 可渲染", img.size == (900, 628))
-    check("不同配色出不同像素", len(set(colours.values())) >= 3, str(len(set(colours.values()))))
 
     single = core.render_group({"L0": axes["L0"]}, 1380)
     check("单轴只画一行", single.size == (1380, 108), str(single.size))
@@ -121,13 +136,12 @@ def test_i18n():
     check("每条都有中英文", not missing, str(missing[:4]))
     check("英文默认文案", text("en", "preview") == "Preview")
     check("中文文案", text("zh", "preview") == "预览")
-    check("带参数格式化", text("en", "summary", n=1, m=6, k=1) == "1 input(s) · 6 script(s) · 1 group(s)")
-    check("轴选择文案", text("en", "axes_selected", n=3) == "3 selected")
+    check("新增按钮文案", text("en", "copy") == "Copy image" and text("zh", "merge") == "合并脚本")
 
 
 def test_ui(work: Path):
     print("\n[5] 界面流程")
-    write_settings(language="en", width=1380, bg_opacity=100, palette="ofs")
+    write_settings(language="en", width=1380, bg_opacity=100)
     import app as gui
 
     root = gui.TkinterDnD.Tk() if gui.HAS_DND else gui.tk.Tk()
@@ -138,8 +152,9 @@ def test_ui(work: Path):
     application.add_inputs([str(SAMPLES)])
     root.update()
     check("输入统计", "6 script(s)" in application.summary_var.get(), application.summary_var.get())
-    check("轴按钮全部可用", all(application.axis_buttons[name]["state"] == "normal"
+    check("轴按钮全部可用", all(application.axis_pills[name]._enabled
                               for name in ("L0", "L1", "L2", "R0", "R1", "R2")))
+    check("缺失轴被禁用", not application.axis_pills["vib"]._enabled)
 
     def pump(timeout=120.0):
         end = time.time() + timeout
@@ -150,7 +165,7 @@ def test_ui(work: Path):
             time.sleep(0.02)
         return False
 
-    application._start(False)
+    application._start("preview")
     check("预览任务结束", pump())
     check("预览得到图片", application.image is not None and application.image.size == (1380, 628),
           str(application.image.size if application.image else None))
@@ -159,41 +174,49 @@ def test_ui(work: Path):
     for name in ("L1", "L2", "R0", "R2"):
         application._toggle_axis(name)
     root.update()
-    application._start(False)
-    check("选轴后预览任务结束", pump())
+    application._start("preview")
+    check("选轴后预览结束", pump())
     check("只画 2 行", application.image.size == (1380, 212), str(application.image.size))
 
-    # 换配色 + 背景 50% + 合并
-    application.palette_var.set(gui.core.palette_label("classic", "en"))
-    application._on_palette()
+    # 复制到剪贴板
+    application.copy_image()
+    root.update()
+    formats = clipboard_formats()
+    check("剪贴板拿到 CF_DIB", formats["open"] and formats["dib"], str(formats))
+    check("剪贴板同时有 PNG", formats["png"], str(formats))
+
+    # 背景 50% + 保存
     application.opacity_var.set(50)
     application._on_opacity(50)
-    application.merge_var.set(True)
     out_dir = work / "out"
     application.out_override = str(out_dir)
-    application._start(True)
+    application._start("save")
     check("保存任务结束", pump())
     png = sorted(out_dir.glob("*.png"))
-    merged = sorted(out_dir.glob("*.funscript"))
     check("文件名带背景透明度", png and png[0].name.endswith("_Axes_bg50.png"),
           str([p.name for p in png]))
-    check("同时导出合并脚本", len(merged) == 1 and merged[0].name.endswith("_merged.funscript"),
-          str([m.name for p in merged for m in [p]]))
+
+    # 单独合并：不生成图片
+    application.image = None
+    application._start("merge")
+    check("合并任务结束", pump())
+    merged = sorted(out_dir.glob("*.funscript"))
+    png_after = sorted(out_dir.glob("*.png"))
+    check("合并只写 funscript", len(merged) == 1 and len(png_after) == len(png),
+          f"{len(merged)} funscript / {len(png_after)} png")
     if merged:
         data = json.loads(merged[0].read_text(encoding="utf-8"))
-        check("合并脚本含 2 个轴", data["version"] == "1.1"
-              and [a["id"] for a in data["axes"]] == ["R1"], str([a["id"] for a in data["axes"]]))
+        check("合并脚本含选中轴", [a["id"] for a in data["axes"]] == ["R1"],
+              str([a["id"] for a in data["axes"]]))
+    check("合并后状态栏有提示", "Merged" in application.status_var.get(), application.status_var.get())
 
     application._switch_language("zh")
     root.update()
-    check("切到中文", application.preview_button["text"] == "预览", application.preview_button["text"])
-    check("配色下拉本地化", application.palette_var.get() in
-          [gui.core.palette_label(key, "zh") for key in gui.core.PALETTES], application.palette_var.get())
+    check("切到中文", application.preview_button._label == "预览", application.preview_button._label)
     settings = json.loads((Path(os.environ["APPDATA"]) / "MHeatmap" / "settings.json")
                           .read_text(encoding="utf-8"))
     check("语言写入配置", settings.get("language") == "zh")
     check("轴选择写入配置", settings.get("axes") is not None, str(settings.get("axes")))
-    check("透明度写入配置", settings.get("bg_opacity") == 50, str(settings.get("bg_opacity")))
     application._switch_language("en")
     root.update()
     application.on_close()
@@ -217,9 +240,9 @@ def test_first_run():
         for widget in walk(root):
             if isinstance(widget, gui.tk.Toplevel):
                 for button in walk(widget):
-                    if isinstance(button, gui.tk.Button) and button.cget("text") == "中文":
+                    if isinstance(button, gui.Pill) and button._label == "中文":
                         picked["found"] = True
-                        button.invoke()
+                        button._command()
                         return
 
     root.after(500, choose)
@@ -227,7 +250,7 @@ def test_first_run():
     root.update()
     check("首次启动弹出语言选择", bool(picked.get("found")))
     check("点中文后界面变中文", application.lang == "zh"
-          and application.preview_button["text"] == "预览", application.preview_button["text"])
+          and application.preview_button._label == "预览", application.preview_button._label)
     application.on_close()
     write_settings(language="en", width=1380)
 

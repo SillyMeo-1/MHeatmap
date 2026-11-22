@@ -1,22 +1,25 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """MHeatmap — Funscript Heatmap Generator (GUI).
 
 English + 中文 UI, English by default, first launch asks for the language.
 
-Run from source:   py -3 app.py
-Self test:         py -3 app.py --selftest <file-or-folder>
+    py -3 app.py
+    py -3 app.py --selftest <file-or-folder>
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import queue
 import random
+import struct
 import sys
 import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
+from io import BytesIO
 from pathlib import Path
 from tkinter import filedialog, ttk
 
@@ -35,22 +38,31 @@ except Exception:  # noqa: BLE001
     HAS_DND = False
 
 APP_TITLE = "MHeatmap"
-UI_VERSION = "1.1"
+UI_VERSION = "1.2"
 
 # ---------------------------------------------------------------- theme
-BG = "#14161a"
-PANEL = "#1b1e23"
-CARD = "#15171b"
-BORDER = "#2e323a"
-TEXT = "#e8eaef"
-MUTED = "#98a0ab"
-DIM = "#767e89"
-ACCENT = "#00b6cc"
-ACCENT_DARK = "#00798a"
-PINK = "#e9308f"
-OK = "#4cd7a0"
-WARN = "#f4bd4a"
-ERR = "#ff7b7b"
+BG = "#0e1116"
+SURFACE = "#151922"
+CARD = "#1b2029"
+CARD_HOVER = "#232a35"
+FIELD = "#141922"
+BORDER = "#2a3140"
+TEXT = "#e8ecf3"
+MUTED = "#97a1b2"
+DIM = "#6b7484"
+ACCENT = "#5eead4"
+ACCENT_HOVER = "#8ff5e4"
+ACCENT_PRESS = "#3ecbb6"
+ACCENT_TEXT = "#06231f"
+WARM = "#f472b6"
+WARM_HOVER = "#f795c8"
+WARM_PRESS = "#d9559a"
+WARM_TEXT = "#29071a"
+OK = "#4ade80"
+WARN = "#fbbf24"
+ERR = "#f87171"
+CANVAS_BG = "#0b0e13"
+SELECT_BG = "#0f6f63"
 
 FONT_UI = "Segoe UI"
 FONT_MONO = "Consolas"
@@ -100,17 +112,85 @@ def atomic_save(image: Image.Image, path: Path) -> None:
         pending.unlink(missing_ok=True)
 
 
+def copy_image_to_clipboard(image: Image.Image) -> bool:
+    """Put the image on the Windows clipboard as CF_DIB plus a PNG flavour."""
+    if sys.platform != "win32":
+        return False
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+    user32.RegisterClipboardFormatW.restype = wintypes.UINT
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+
+    rgba = image.convert("RGBA")
+    width, height = rgba.size
+    background = Image.new("RGBA", rgba.size, (14, 17, 22, 255))
+    flat = Image.alpha_composite(background, rgba)
+    pixels = flat.tobytes()
+
+    header = struct.pack("<IiiHHIIiiII", 40, width, height, 1, 32, 0, 0, 0, 0, 0, 0)
+    rows = []
+    stride = width * 4
+    for y in range(height - 1, -1, -1):
+        row = pixels[y * stride:(y + 1) * stride]
+        converted = bytearray(stride)
+        converted[0::4] = row[2::4]
+        converted[1::4] = row[1::4]
+        converted[2::4] = row[0::4]
+        converted[3::4] = b"\xff" * width
+        rows.append(bytes(converted))
+    dib = header + b"".join(rows)
+
+    png_buffer = BytesIO()
+    rgba.save(png_buffer, format="PNG")
+    png_bytes = png_buffer.getvalue()
+
+    GMEM_MOVEABLE, CF_DIB = 0x0002, 8
+
+    def global_block(data: bytes):
+        handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+        if not handle:
+            return None
+        pointer = kernel32.GlobalLock(handle)
+        ctypes.memmove(pointer, data, len(data))
+        kernel32.GlobalUnlock(handle)
+        return handle
+
+    if not user32.OpenClipboard(None):
+        return False
+    ok = False
+    try:
+        user32.EmptyClipboard()
+        handle = global_block(dib)
+        if handle and user32.SetClipboardData(CF_DIB, handle):
+            ok = True
+        png_format = user32.RegisterClipboardFormatW("PNG")
+        if png_format:
+            png_handle = global_block(png_bytes)
+            if png_handle:
+                user32.SetClipboardData(png_format, png_handle)
+    finally:
+        user32.CloseClipboard()
+    return ok
+
+
 def enable_dpi_awareness() -> None:
     if sys.platform != "win32":
         return
     try:
-        import ctypes
-
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:  # noqa: BLE001
         try:
-            import ctypes
-
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception:  # noqa: BLE001
             pass
@@ -120,8 +200,6 @@ def register_bundled_font() -> None:
     if sys.platform != "win32":
         return
     try:
-        import ctypes
-
         path = core.resource_path(core.BUNDLED_FONT)
         if path.exists():
             ctypes.windll.gdi32.AddFontResourceExW(str(path), 0x10, 0)
@@ -132,15 +210,16 @@ def register_bundled_font() -> None:
 def app_icon(size: int = 64) -> Image.Image:
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((1, 1, size - 2, size - 2), radius=size // 5, fill=(21, 23, 27, 255))
+    draw.rounded_rectangle((1, 1, size - 2, size - 2), radius=size // 5, fill=(21, 25, 34, 255))
     bars = ((213, 126, 18), (16, 196, 53), (53, 153, 154))
     pad = size // 7
     height = max(3, size // 12)
     for index, colour in enumerate(bars):
         top = pad + index * (height + max(2, size // 22))
-        draw.rounded_rectangle((pad, top, size - pad, top + height), radius=height // 2, fill=(*colour, 255))
+        draw.rounded_rectangle((pad, top, size - pad, top + height), radius=height // 2,
+                               fill=(*colour, 255))
     draw.rounded_rectangle((pad, size - pad - max(2, height // 2), size - pad, size - pad),
-                           radius=max(1, height // 4), fill=(236, 47, 160, 255))
+                           radius=max(1, height // 4), fill=(244, 114, 182, 255))
     return image
 
 
@@ -154,6 +233,148 @@ def checkerboard(size, cell: int = 12, light=(88, 90, 98), dark=(52, 54, 60)) ->
     return board
 
 
+# ---------------------------------------------------------------- widgets
+def rounded_rect(canvas: tk.Canvas, x1, y1, x2, y2, radius, **kwargs):
+    points = [
+        x1 + radius, y1, x2 - radius, y1, x2, y1, x2, y1 + radius,
+        x2, y2 - radius, x2, y2, x2 - radius, y2, x1 + radius, y2,
+        x1, y2, x1, y2 - radius, x1, y1 + radius, x1, y1,
+    ]
+    return canvas.create_polygon(points, smooth=True, **kwargs)
+
+
+class Pill(tk.Canvas):
+    """Rounded button / toggle with hover and press feedback."""
+
+    KINDS = {
+        "primary": dict(fill=ACCENT, hover=ACCENT_HOVER, press=ACCENT_PRESS, fg=ACCENT_TEXT),
+        "warm": dict(fill=WARM, hover=WARM_HOVER, press=WARM_PRESS, fg=WARM_TEXT),
+        "plain": dict(fill="#2a3342", hover="#354052", press="#212836", fg=TEXT),
+        "soft": dict(fill="#232c3a", hover="#2d3847", press="#1c2430", fg=MUTED),
+        "ghost": dict(fill="#1f2733", hover="#2a3342", press="#1a212b", fg=MUTED),
+        "on": dict(fill=ACCENT, hover=ACCENT_HOVER, press=ACCENT_PRESS, fg=ACCENT_TEXT),
+    }
+
+    def __init__(self, master, text_, command=None, kind="plain", font_=None,
+                 width=120, height=34, radius=None):
+        self._host_bg = master.cget("bg")
+        super().__init__(master, width=width, height=height, bg=self._host_bg,
+                         highlightthickness=0, bd=0, cursor="hand2")
+        self._command = command
+        self._kind = kind
+        self._label = text_
+        self._font = font_ or font(9, "bold")
+        self._radius = radius if radius is not None else max(6, height // 3)
+        self._enabled = True
+        self._hover = False
+        self._pressed = False
+        self._draw()
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<ButtonPress-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
+
+    # ---- public
+    def set_label(self, value: str):
+        self._label = value
+        self._draw()
+
+    def set_enabled(self, enabled: bool):
+        self._enabled = enabled
+        self.configure(cursor="hand2" if enabled else "")
+        self._draw()
+
+    def set_kind(self, kind: str):
+        self._kind = kind
+        self._draw()
+
+    def set_selected(self, selected: bool, text_: str | None = None):
+        self._kind = "on" if selected else "plain"
+        if text_ is not None:
+            self._label = text_
+        self._draw()
+
+    # ---- drawing
+    def _draw(self):
+        self.delete("all")
+        width = int(float(self["width"]))
+        height = int(float(self["height"]))
+        spec = self.KINDS.get(self._kind, self.KINDS["plain"])
+        if not self._enabled:
+            fill = "#20262f" if self._kind in ("plain", "ghost", "soft") else "#20303a"
+            label_colour = DIM
+        elif self._pressed:
+            fill, label_colour = spec["press"], spec["fg"]
+        elif self._hover:
+            fill, label_colour = spec["hover"], spec["fg"]
+        else:
+            fill, label_colour = spec["fill"], spec["fg"]
+        pad = 1 if self._kind in ("plain", "soft", "ghost") else 0
+        rounded_rect(self, 0.5 + pad, 0.5 + pad, width - 0.5 - pad, height - 0.5 - pad,
+                     self._radius, fill=fill, outline="")
+        self.create_text(width / 2, height / 2 - 0.5, text=self._label,
+                         fill=label_colour, font=self._font)
+
+    # ---- events
+    def _on_enter(self, _event=None):
+        if not self._enabled:
+            return
+        self._hover = True
+        self._draw()
+
+    def _on_leave(self, _event=None):
+        self._hover = False
+        self._pressed = False
+        self._draw()
+
+    def _on_press(self, _event=None):
+        if not self._enabled:
+            return
+        self._pressed = True
+        self._draw()
+
+    def _on_release(self, event=None):
+        if not self._enabled:
+            return
+        was_pressed = self._pressed
+        self._pressed = False
+        self._draw()
+        inside = True
+        if event is not None:
+            inside = 0 <= event.x <= int(float(self["width"])) and 0 <= event.y <= int(float(self["height"]))
+        if was_pressed and inside and self._command:
+            self._command()
+
+
+class Toast:
+    """Small message bubble over the preview area."""
+
+    def __init__(self, root: tk.Misc):
+        self.root = root
+        self.label = tk.Label(root, text="", font=font(9, "bold"), bd=0,
+                              padx=px(14), pady=px(8))
+        self._job = None
+
+    def show(self, message: str, kind: str = "info"):
+        colours = {
+            "info": (CARD, TEXT),
+            "ok": ("#123222", OK),
+            "warn": ("#3a2c12", WARN),
+            "err": ("#3a1a1a", ERR),
+        }
+        bg, fg = colours.get(kind, colours["info"])
+        self.label.configure(text=message, bg=bg, fg=fg)
+        self.label.place(relx=0.985, rely=0.97, anchor="se")
+        self.label.lift()
+        if self._job:
+            self.root.after_cancel(self._job)
+        self._job = self.root.after(2400, self.hide)
+
+    def hide(self):
+        self._job = None
+        self.label.place_forget()
+
+
 # ---------------------------------------------------------------- app
 class App:
     def __init__(self, root, initial_paths=()):
@@ -164,12 +385,11 @@ class App:
         self.width = int(self.settings.get("width") or core.DEFAULT_WIDTH)
         legacy_alpha = 0 if self.settings.get("transparent") else 100
         self.bg_opacity = int(self.settings.get("bg_opacity", legacy_alpha))
-        self.palette = str(self.settings.get("palette") or core.DEFAULT_PALETTE)
         stored_axes = self.settings.get("axes")
         self.axes_enabled = (set(stored_axes) if isinstance(stored_axes, list)
                              else {axis[0] for axis in core.AXES})
-        self.merge = bool(self.settings.get("merge", False))
         self.out_override = str(self.settings.get("out_dir") or "")
+
         self.results: list[dict] = []
         self.current = -1
         self.image: Image.Image | None = None
@@ -181,6 +401,7 @@ class App:
         self._drag_origin = None
         self._redraw_job = None
         self._board = None
+        self._pulse_job = None
         self.busy = False
         self.queue: queue.Queue = queue.Queue()
 
@@ -208,9 +429,8 @@ class App:
         root.after(120, lambda: self.root.focus_force())
 
     def _startup_preview(self):
-        """Opened by dropping a script onto the exe → render it right away."""
         if self.inputs and not self.busy and not self.results:
-            self._start(False)
+            self._start("preview")
 
     # ------------------------------------------------------------ setup
     def _init_scale(self):
@@ -221,12 +441,12 @@ class App:
             dpi = 96.0
         SCALE = max(1.0, min(2.0, dpi / 96.0))
         screen_w, screen_h = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        width = min(px(1120), screen_w - px(40))
-        height = min(px(760), screen_h - px(90))
+        width = min(px(1160), screen_w - px(40))
+        height = min(px(780), screen_h - px(90))
         left = max(0, (screen_w - width) // 2)
         top = max(px(8), (screen_h - height) // 2 - px(24))
         self.root.geometry(f"{width}x{height}+{left}+{top}")
-        self.root.minsize(px(900), px(580))
+        self.root.minsize(px(960), px(620))
 
         families = set(tkfont.families(self.root))
         preferred = ("Microsoft YaHei UI", "Microsoft YaHei") if self.lang == "zh" else ("Segoe UI",)
@@ -245,35 +465,27 @@ class App:
             style.theme_use("clam")
         except Exception:  # noqa: BLE001
             pass
-        self.root.option_add("*TCombobox*Listbox.background", PANEL)
-        style.configure(".", background=PANEL, foreground=TEXT, fieldbackground=CARD,
-                        bordercolor=BORDER, lightcolor=CARD, darkcolor=CARD)
-        style.configure("TFrame", background=PANEL)
-        style.configure("TLabel", background=PANEL, foreground=TEXT)
-        style.configure("Dark.TCombobox", fieldbackground=CARD, background=CARD, foreground=TEXT,
-                        arrowcolor=MUTED, bordercolor=BORDER, lightcolor=CARD, darkcolor=CARD,
-                        selectbackground=CARD, selectforeground=TEXT, padding=px(3))
-        style.map("Dark.TCombobox",
-                  fieldbackground=[("readonly", CARD), ("disabled", PANEL)],
-                  foreground=[("disabled", DIM)],
-                  selectbackground=[("readonly", CARD)],
-                  selectforeground=[("readonly", TEXT)],
-                  arrowcolor=[("disabled", BORDER)])
-        style.configure("Dark.TEntry", fieldbackground=CARD, foreground=TEXT, insertcolor=TEXT,
-                        bordercolor=BORDER, lightcolor=CARD, darkcolor=CARD, padding=px(5))
-        style.map("Dark.TEntry", bordercolor=[("focus", ACCENT)], foreground=[("disabled", DIM)])
-        style.configure("Dark.TCheckbutton", background=PANEL, foreground=TEXT, focuscolor=PANEL,
-                        indicatorbackground=CARD, indicatorforeground=TEXT, indicatormargin=px(4))
-        style.map("Dark.TCheckbutton", background=[("active", PANEL)],
-                  indicatorbackground=[("selected", ACCENT), ("active", CARD)])
-        style.configure("Dark.Vertical.TScrollbar", background=CARD, troughcolor=BG,
-                        bordercolor=BG, arrowcolor=MUTED, darkcolor=CARD, lightcolor=CARD,
-                        width=px(10))
-        style.map("Dark.Vertical.TScrollbar", background=[("active", BORDER)])
-        style.configure("Dark.Horizontal.TProgressbar", troughcolor=CARD, background=ACCENT,
-                        bordercolor=CARD, lightcolor=ACCENT, darkcolor=ACCENT, thickness=px(5))
-        style.configure("Dark.Horizontal.TScale", background=PANEL, troughcolor=CARD,
-                        bordercolor=BORDER, lightcolor=ACCENT, darkcolor=ACCENT)
+        self.root.option_add("*TCombobox*Listbox.background", CARD)
+        self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", ACCENT_TEXT)
+
+        style.configure(".", background=SURFACE, foreground=TEXT, fieldbackground=FIELD,
+                        bordercolor=BORDER, lightcolor=FIELD, darkcolor=FIELD)
+        style.configure("TFrame", background=SURFACE)
+        style.configure("TLabel", background=SURFACE, foreground=TEXT)
+        style.configure("Dark.TEntry", fieldbackground=FIELD, foreground=TEXT, insertcolor=ACCENT,
+                        bordercolor=BORDER, lightcolor=FIELD, darkcolor=FIELD, padding=px(5))
+        style.map("Dark.TEntry", bordercolor=[("focus", ACCENT)],
+                  lightcolor=[("focus", ACCENT)], foreground=[("disabled", DIM)])
+        style.configure("Dark.Vertical.TScrollbar", background=CARD, troughcolor=SURFACE,
+                        bordercolor=SURFACE, arrowcolor=MUTED, darkcolor=CARD, lightcolor=CARD,
+                        width=px(9))
+        style.map("Dark.Vertical.TScrollbar", background=[("active", CARD_HOVER)])
+        style.configure("Dark.Horizontal.TProgressbar", troughcolor=FIELD, background=ACCENT,
+                        bordercolor=FIELD, lightcolor=ACCENT, darkcolor=ACCENT, thickness=px(4))
+        style.configure("Dark.Horizontal.TScale", background=CARD, troughcolor=FIELD,
+                        bordercolor=CARD, lightcolor=ACCENT, darkcolor=ACCENT)
 
     # ------------------------------------------------------------ language
     def _ask_language(self):
@@ -286,7 +498,7 @@ class App:
         frame = tk.Frame(dialog, bg=BG, padx=px(34), pady=px(26))
         frame.pack(fill="both", expand=True)
         tk.Label(frame, text="MHeatmap", bg=BG, fg=TEXT, font=font(18, "bold")).pack(anchor="w")
-        tk.Label(frame, text=text(self.lang, "tagline"), bg=BG, fg=PINK,
+        tk.Label(frame, text=text(self.lang, "tagline"), bg=BG, fg=ACCENT,
                  font=font(10, "bold")).pack(anchor="w", pady=(px(2), px(18)))
         tk.Label(frame, text=f'{text(self.lang, "choose_language")} / 选择语言',
                  bg=BG, fg=TEXT, font=font(11)).pack(anchor="w")
@@ -296,11 +508,10 @@ class App:
         row = tk.Frame(frame, bg=BG)
         row.pack(fill="x")
         for code, label in LANGUAGES:
-            tk.Button(row, text=label, command=lambda c=code: self._choose_language(c, dialog),
-                      bg=ACCENT if code == DEFAULT_LANGUAGE else PANEL, fg="#04252a" if code == DEFAULT_LANGUAGE else TEXT,
-                      activebackground=ACCENT_DARK, activeforeground="#ffffff", bd=0,
-                      relief="flat", highlightthickness=0, cursor="hand2",
-                      font=font(11, "bold"), padx=px(26), pady=px(9)).pack(side="left", padx=(0, px(10)))
+            Pill(row, label, lambda c=code: self._choose_language(c, dialog),
+                 kind="primary" if code == DEFAULT_LANGUAGE else "plain",
+                 font_=font(11, "bold"), width=px(124), height=px(40),
+                 radius=px(10)).pack(side="left", padx=(0, px(10)))
 
         dialog.update_idletasks()
         width, height = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
@@ -334,43 +545,18 @@ class App:
         for child in self.root.winfo_children():
             child.destroy()
         self._build_style()
-
-        header = tk.Frame(self.root, bg=BG)
-        header.pack(side="top", fill="x", padx=px(16), pady=(px(12), px(8)))
-        tk.Label(header, text="MHeatmap", bg=BG, fg=TEXT, font=font(16, "bold")).pack(side="left")
-        tk.Label(header, text=text(self.lang, "tagline"), bg=BG, fg=PINK,
-                 font=font(9, "bold")).pack(side="left", padx=(px(10), 0), pady=(px(5), 0))
-
-        langs = tk.Frame(header, bg=BG)
-        langs.pack(side="right")
-        for code, label in LANGUAGES:
-            active = code == self.lang
-            tk.Button(langs, text=label, command=lambda c=code: self._switch_language(c),
-                      bg=ACCENT if active else PANEL, fg="#04252a" if active else MUTED,
-                      activebackground=ACCENT, activeforeground="#04252a", bd=0, relief="flat",
-                      highlightthickness=0, cursor="hand2", font=font(9, "bold" if active else "normal"),
-                      padx=px(10), pady=px(3)).pack(side="left", padx=(px(4), 0))
-
-        self.status_var = tk.StringVar(value=text(self.lang, "ready"))
-        status = tk.Frame(self.root, bg="#101216")
-        status.pack(side="bottom", fill="x")
-        tk.Label(status, textvariable=self.status_var, bg="#101216", fg=MUTED, font=font(9),
-                 anchor="w").pack(side="left", padx=px(14), pady=px(5))
-        tk.Label(status, text=f"MHeatmap {UI_VERSION}", bg="#101216", fg=DIM,
-                 font=font(8)).pack(side="right", padx=px(14))
-        self.progress = ttk.Progressbar(status, style="Dark.Horizontal.TProgressbar",
-                                        length=px(140), mode="determinate")
-        self.progress.pack(side="right", padx=px(8), pady=px(5))
+        self._build_header()
+        self._build_status_bar()
 
         body = tk.Frame(self.root, bg=BG)
         body.pack(fill="both", expand=True, padx=px(14), pady=(0, px(10)))
-        body.grid_columnconfigure(0, minsize=px(330))
+        body.grid_columnconfigure(0, minsize=px(350))
         body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
-        self.sidebar = tk.Frame(body, bg=PANEL)
-        self.sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, px(8)))
-        self.preview = tk.Frame(body, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        self.sidebar = tk.Frame(body, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER)
+        self.sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, px(10)))
+        self.preview = tk.Frame(body, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER)
         self.preview.grid(row=0, column=1, sticky="nsew")
 
         self._build_sidebar()
@@ -378,7 +564,7 @@ class App:
         self._enable_dnd()
         self._bind_shortcuts()
         self._refresh_list()
-        self.root.after(80, self._focus_canvas)
+        self.root.after(60, self._focus_canvas)
 
     def _focus_canvas(self):
         try:
@@ -386,45 +572,96 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
+    def _build_header(self):
+        header = tk.Frame(self.root, bg=BG)
+        header.pack(side="top", fill="x", padx=px(18), pady=(px(12), px(10)))
+
+        mark = tk.Canvas(header, width=px(28), height=px(28), bg=BG, highlightthickness=0, bd=0)
+        mark.pack(side="left", padx=(0, px(10)))
+        rounded_rect(mark, 1, 1, px(27), px(27), px(7), fill=CARD, outline=BORDER)
+        for index, colour in enumerate(((213, 126, 18), (16, 196, 53), (53, 153, 154))):
+            y = px(7) + index * px(5)
+            mark.create_rectangle(px(7), y, px(21), y + px(3), fill="#{:02x}{:02x}{:02x}".format(*colour), width=0)
+
+        tk.Label(header, text="MHeatmap", bg=BG, fg=TEXT, font=font(16, "bold")).pack(side="left")
+        tk.Label(header, text=self._t("tagline"), bg=BG, fg=ACCENT,
+                 font=font(9, "bold")).pack(side="left", padx=(px(10), 0), pady=(px(5), 0))
+
+        langs = tk.Frame(header, bg=BG)
+        langs.pack(side="right")
+        for code, label in LANGUAGES:
+            selected = code == self.lang
+            pill = Pill(langs, label, lambda c=code: self._switch_language(c),
+                        kind="on" if selected else "ghost",
+                        font_=font(9, "bold" if selected else "normal"),
+                        width=px(74), height=px(28), radius=px(8))
+            pill.pack(side="left", padx=(px(4), 0))
+
+    def _build_status_bar(self):
+        bar = tk.Frame(self.root, bg="#0a0d12", height=px(30))
+        bar.pack(side="bottom", fill="x")
+        bar.pack_propagate(False)
+
+        self.status_dot = tk.Canvas(bar, width=px(16), height=px(16), bg="#0a0d12",
+                                    highlightthickness=0, bd=0)
+        self.status_dot.pack(side="left", padx=(px(16), px(2)), pady=px(6))
+        self._dot_item = self.status_dot.create_oval(px(4), px(4), px(12), px(12),
+                                                     fill=DIM, outline="")
+
+        self.status_var = tk.StringVar(value=self._t("ready"))
+        tk.Label(bar, textvariable=self.status_var, bg="#0a0d12", fg=MUTED,
+                 font=font(9)).pack(side="left")
+
+        tk.Label(bar, text=f"MHeatmap {UI_VERSION}", bg="#0a0d12", fg=DIM,
+                 font=font(8)).pack(side="right", padx=px(16))
+        self.progress = ttk.Progressbar(bar, style="Dark.Horizontal.TProgressbar",
+                                        length=px(150), mode="determinate")
+        self.progress.pack(side="right", padx=px(10), pady=px(10))
+
+    # ------------------------------------------------------------ sidebar
+    def _card(self, parent, title: str | None = None, top: int = 10):
+        outer = tk.Frame(parent, bg=SURFACE)
+        outer.pack(fill="x", padx=px(12), pady=(px(top), 0))
+        card = tk.Frame(outer, bg=CARD)
+        card.pack(fill="x")
+        inner = tk.Frame(card, bg=CARD)
+        inner.pack(fill="x", padx=px(12), pady=px(10))
+        head = None
+        if title:
+            head = tk.Frame(inner, bg=CARD)
+            head.pack(fill="x", pady=(0, px(6)))
+            tk.Label(head, text=title, bg=CARD, fg=MUTED,
+                     font=font(8, "bold")).pack(side="left")
+        return inner, head
+
     def _build_sidebar(self):
-        pad = px(14)
-        footer = tk.Frame(self.sidebar, bg=PANEL)
-        footer.pack(side="bottom", fill="x")
-        tk.Frame(footer, bg=BORDER, height=1).pack(fill="x")
-        box = tk.Frame(footer, bg=PANEL)
-        box.pack(fill="x", padx=pad, pady=px(9))
-        self.preview_button = self._button(box, self._t("preview"), lambda: self._start(False),
-                                           kind="accent", size=10, pady=px(8))
-        self.preview_button.pack(side="left", fill="x", expand=True)
-        self.save_button = self._button(box, self._t("save"), lambda: self._start(True),
-                                        kind="pink", size=10, pady=px(8))
-        self.save_button.pack(side="left", fill="x", expand=True, padx=(px(7), 0))
+        # -------- drop zone
+        holder = tk.Frame(self.sidebar, bg=SURFACE)
+        holder.pack(fill="x", padx=px(12), pady=(px(12), 0))
+        self.drop_zone = tk.Canvas(holder, height=px(78), bg=SURFACE,
+                                   highlightthickness=0, bd=0, cursor="hand2")
+        self.drop_zone.pack(fill="x")
+        self._drop_rect = rounded_rect(self.drop_zone, 1, 1, 1, 1, px(10), fill=FIELD, outline=BORDER)
+        self.drop_hint = self.drop_zone.create_text(0, 0, text=self._t("drop_hint"),
+                                                    fill=MUTED, font=font(9, "bold"))
+        self.drop_sub = self.drop_zone.create_text(0, 0, text=self._t("drop_sub"),
+                                                   fill=DIM, font=font(8))
+        self.drop_zone.bind("<Configure>", self._layout_drop_zone)
+        self.drop_zone.bind("<Enter>", lambda _e: self._drop_hover(True))
+        self.drop_zone.bind("<Leave>", lambda _e: self._drop_hover(False))
 
-        self.drop_zone = tk.Frame(self.sidebar, bg=CARD, highlightthickness=1,
-                                  highlightbackground=BORDER, height=px(64))
-        self.drop_zone.pack(fill="x", padx=pad, pady=(px(12), px(8)))
-        self.drop_zone.pack_propagate(False)
-        self.drop_hint = tk.Label(self.drop_zone, text=self._t("drop_hint"),
-                                  bg=CARD, fg=MUTED, font=font(9))
-        self.drop_hint.pack(expand=True)
-        self.drop_sub = tk.Label(self.drop_zone, text=self._t("drop_sub"),
-                                 bg=CARD, fg=DIM, font=font(8))
-        self.drop_sub.pack(expand=True)
+        # -------- inputs
+        inner, head = self._card(self.sidebar, self._t("inputs"), top=10)
+        self.input_count = tk.Label(head, text="", bg=CARD, fg=DIM, font=font(8))
+        self.input_count.pack(side="right")
 
-        row = tk.Frame(self.sidebar, bg=PANEL)
-        row.pack(fill="x", padx=pad)
-        self._button(row, self._t("add_files"), self.choose_files).pack(side="left")
-        self._button(row, self._t("add_folder"), self.choose_folder).pack(side="left", padx=(px(6), 0))
-        self._button(row, self._t("clear"), self.clear_inputs, kind="ghost").pack(side="right")
-
-        holder = tk.Frame(self.sidebar, bg=PANEL)
-        holder.pack(fill="x", padx=pad, pady=(px(8), 0))
-        self.listbox = tk.Listbox(holder, height=5, bg=CARD, fg=TEXT, font=font(9), bd=0,
-                                  highlightthickness=1, highlightbackground=BORDER,
-                                  selectbackground=ACCENT_DARK, selectforeground="#ffffff",
-                                  activestyle="none", exportselection=False)
-        self.listbox.pack(side="left", fill="both", expand=True)
-        bar = ttk.Scrollbar(holder, orient="vertical", command=self.listbox.yview,
+        listbox_holder = tk.Frame(inner, bg=FIELD, highlightthickness=1, highlightbackground=BORDER)
+        listbox_holder.pack(fill="x")
+        self.listbox = tk.Listbox(listbox_holder, height=4, bg=FIELD, fg=TEXT, font=font(9), bd=0,
+                                  highlightthickness=0, selectbackground=SELECT_BG,
+                                  selectforeground="#ffffff", activestyle="none", exportselection=False)
+        self.listbox.pack(side="left", fill="both", expand=True, padx=px(4), pady=px(3))
+        bar = ttk.Scrollbar(listbox_holder, orient="vertical", command=self.listbox.yview,
                             style="Dark.Vertical.TScrollbar")
         bar.pack(side="right", fill="y")
         self.listbox.configure(yscrollcommand=bar.set)
@@ -432,216 +669,163 @@ class App:
         self.listbox.bind("<Double-Button-1>", self._on_open_input)
 
         self.summary_var = tk.StringVar(value=self._t("summary_empty"))
-        tk.Label(self.sidebar, textvariable=self.summary_var, bg=PANEL, fg=MUTED, font=font(8),
-                 anchor="w", justify="left", wraplength=px(300)).pack(fill="x", padx=pad, pady=(px(6), 0))
+        tk.Label(inner, textvariable=self.summary_var, bg=CARD, fg=DIM, font=font(8),
+                 anchor="w", justify="left", wraplength=px(290)).pack(fill="x", pady=(px(6), px(6)))
 
-        # ---- axes selection
-        head = tk.Frame(self.sidebar, bg=PANEL)
-        head.pack(fill="x", padx=pad, pady=(px(8), px(3)))
-        tk.Label(head, text=self._t("axes"), bg=PANEL, fg=MUTED,
-                 font=font(8, "bold")).pack(side="left")
-        self.axes_hint = tk.Label(head, text="", bg=PANEL, fg=DIM, font=font(8))
+        row = tk.Frame(inner, bg=CARD)
+        row.pack(fill="x")
+        Pill(row, self._t("add_files"), self.choose_files, kind="plain",
+             font_=font(8, "bold"), width=px(86), height=px(26), radius=px(7)).pack(side="left")
+        Pill(row, self._t("add_folder"), self.choose_folder, kind="plain",
+             font_=font(8, "bold"), width=px(96), height=px(26), radius=px(7)).pack(side="left", padx=(px(6), 0))
+        Pill(row, self._t("clear"), self.clear_inputs, kind="ghost",
+             font_=font(8), width=px(56), height=px(26), radius=px(7)).pack(side="right")
+
+        # -------- axes
+        inner, head = self._card(self.sidebar, self._t("axes"), top=10)
+        self.axes_hint = tk.Label(head, text="", bg=CARD, fg=DIM, font=font(8))
         self.axes_hint.pack(side="right")
 
-        chips = tk.Frame(self.sidebar, bg=PANEL)
-        chips.pack(fill="x", padx=pad)
-        self.axis_buttons = {}
-        for axis_name, _colour, _tokens in core.AXES:
-            button = tk.Button(chips, text=axis_name, bd=0, relief="flat", highlightthickness=0,
-                               cursor="hand2", font=font(8, "bold"), width=3, padx=0, pady=px(1),
-                               command=lambda name=axis_name: self._toggle_axis(name))
-            button.pack(side="left", padx=(0, px(3)))
-            self.axis_buttons[axis_name] = button
+        grid = tk.Frame(inner, bg=CARD)
+        grid.pack(fill="x")
+        self.axis_pills = {}
+        for index, (axis_name, colour, _tokens) in enumerate(core.AXES):
+            pill = Pill(grid, axis_name, lambda name=axis_name: self._toggle_axis(name),
+                        kind="plain", font_=font(8, "bold"), width=px(46), height=px(26), radius=px(7))
+            row_index, column = divmod(index, 6)
+            pill.grid(row=row_index, column=column, padx=(0, px(4)), pady=(0, px(4)), sticky="w")
+            self.axis_pills[axis_name] = pill
 
-        tk.Frame(self.sidebar, bg=BORDER, height=1).pack(fill="x", padx=pad, pady=(px(10), 0))
-        tk.Label(self.sidebar, text=self._t("settings"), bg=PANEL, fg=MUTED,
-                 font=font(8, "bold")).pack(anchor="w", padx=pad, pady=(px(8), px(4)))
+        # -------- settings
+        inner, head = self._card(self.sidebar, self._t("settings"), top=10)
 
-        # ---- width
-        width_row = tk.Frame(self.sidebar, bg=PANEL)
-        width_row.pack(fill="x", padx=pad, pady=(0, px(5)))
-        tk.Label(width_row, text=self._t("width"), bg=PANEL, fg=MUTED, font=font(8),
-                 width=10, anchor="w").pack(side="left")
+        width_row = tk.Frame(inner, bg=CARD)
+        width_row.pack(fill="x", pady=(0, px(8)))
+        tk.Label(width_row, text=self._t("width"), bg=CARD, fg=MUTED, font=font(8),
+                 width=9, anchor="w").pack(side="left")
         self.width_var = tk.StringVar(value=str(self.width))
         ttk.Entry(width_row, textvariable=self.width_var, style="Dark.TEntry",
-                  font=font(9), width=7).pack(side="left")
+                  font=font(9), width=8).pack(side="left")
 
-        # ---- palette
-        palette_row = tk.Frame(self.sidebar, bg=PANEL)
-        palette_row.pack(fill="x", padx=pad, pady=(0, px(5)))
-        tk.Label(palette_row, text=self._t("palette"), bg=PANEL, fg=MUTED, font=font(8),
-                 width=10, anchor="w").pack(side="left")
-        self.palette_var = tk.StringVar(value=core.palette_label(self.palette, self.lang))
-        self.palette_box = ttk.Combobox(
-            palette_row, textvariable=self.palette_var, state="readonly",
-            style="Dark.TCombobox", font=font(9), width=16,
-            values=[core.palette_label(key, self.lang) for key in core.PALETTES],
-        )
-        self.palette_box.pack(side="left")
-        self.palette_box.bind("<<ComboboxSelected>>", lambda _event: self._on_palette())
-        self.palette_chip = tk.Canvas(palette_row, width=px(52), height=px(14), bg=PANEL,
-                                      highlightthickness=0, bd=0)
-        self.palette_chip.pack(side="right")
-        self._draw_palette_chip()
-
-        # ---- background opacity
-        opacity_row = tk.Frame(self.sidebar, bg=PANEL)
-        opacity_row.pack(fill="x", padx=pad, pady=(0, px(4)))
-        tk.Label(opacity_row, text=self._t("bg_opacity"), bg=PANEL, fg=MUTED, font=font(8),
-                 width=10, anchor="w").pack(side="left")
+        opacity_row = tk.Frame(inner, bg=CARD)
+        opacity_row.pack(fill="x", pady=(0, px(8)))
+        tk.Label(opacity_row, text=self._t("bg_opacity"), bg=CARD, fg=MUTED, font=font(8),
+                 width=9, anchor="w").pack(side="left")
         self.opacity_var = tk.DoubleVar(value=self.bg_opacity)
         self.opacity_scale = ttk.Scale(opacity_row, from_=0, to=100, orient="horizontal",
                                        variable=self.opacity_var, style="Dark.Horizontal.TScale",
                                        command=self._on_opacity)
         self.opacity_scale.pack(side="left", fill="x", expand=True)
-        self.opacity_label = tk.Label(opacity_row, text=f"{self.bg_opacity}%", bg=PANEL, fg=TEXT,
-                                      font=font(8), width=4, anchor="e")
+        self.opacity_label = tk.Label(opacity_row, text=f"{self.bg_opacity}%", bg=CARD, fg=TEXT,
+                                      font=font(8, "bold"), width=4, anchor="e")
         self.opacity_label.pack(side="right")
 
-        # ---- merge
-        self.merge_var = tk.BooleanVar(value=self.merge)
-        ttk.Checkbutton(self.sidebar, text=self._t("merge"), variable=self.merge_var,
-                        style="Dark.TCheckbutton").pack(anchor="w", padx=pad, pady=(0, px(4)))
-
-        # ---- output
-        out_row = tk.Frame(self.sidebar, bg=PANEL)
-        out_row.pack(fill="x", padx=pad, pady=(px(2), 0))
-        tk.Label(out_row, text=self._t("output"), bg=PANEL, fg=MUTED,
-                 font=font(8)).pack(side="left")
+        out_row = tk.Frame(inner, bg=CARD)
+        out_row.pack(fill="x")
+        tk.Label(out_row, text=self._t("output"), bg=CARD, fg=MUTED, font=font(8),
+                 width=9, anchor="w").pack(side="left")
         self.out_var = tk.StringVar(value=self._out_text())
-        tk.Label(out_row, textvariable=self.out_var, bg=PANEL, fg=TEXT, font=font(8),
-                 anchor="w").pack(side="left", padx=(px(6), 0), fill="x", expand=True)
-        self._button(out_row, self._t("change"), self.choose_out_dir, kind="ghost",
-                     padx_=px(6), pady=px(1)).pack(side="right")
-        self._button(out_row, self._t("reset"), self.reset_out_dir,
-                     kind="ghost", padx_=px(6), pady=px(1)).pack(side="right", padx=(0, px(2)))
+        tk.Label(out_row, textvariable=self.out_var, bg=CARD, fg=TEXT, font=font(8),
+                 anchor="w").pack(side="left", fill="x", expand=True)
+        Pill(out_row, self._t("change"), self.choose_out_dir, kind="ghost",
+             font_=font(8), width=px(52), height=px(24), radius=px(6)).pack(side="right")
+        Pill(out_row, self._t("reset"), self.reset_out_dir, kind="ghost",
+             font_=font(8), width=px(46), height=px(24), radius=px(6)).pack(side="right", padx=(0, px(4)))
 
-    # ------------------------------------------------------------ axis / palette
-    def _available_axes(self) -> set:
-        if not self.inputs:
-            return set()
-        groups = core.group_files(core.collect_inputs(self.inputs))
-        available = set()
-        for group in groups:
-            available.update(group["axes"].keys())
-        return available
+        # -------- actions (fixed at the bottom)
+        footer = tk.Frame(self.sidebar, bg=SURFACE)
+        footer.pack(side="bottom", fill="x")
+        tk.Frame(footer, bg=BORDER, height=1).pack(fill="x")
+        actions = tk.Frame(footer, bg=SURFACE)
+        actions.pack(fill="x", padx=px(12), pady=px(10))
+        actions.grid_columnconfigure(0, weight=1)
+        actions.grid_columnconfigure(1, weight=1)
 
-    def _selected_axes(self) -> set:
-        return set(self.axes_enabled) & self._available_axes()
+        self.preview_button = Pill(actions, self._t("preview"), lambda: self._start("preview"),
+                                   kind="plain", font_=font(10, "bold"),
+                                   width=px(148), height=px(38), radius=px(9))
+        self.preview_button.grid(row=0, column=0, sticky="ew", padx=(0, px(5)))
+        self.save_button = Pill(actions, self._t("save"), lambda: self._start("save"),
+                                kind="primary", font_=font(10, "bold"),
+                                width=px(148), height=px(38), radius=px(9))
+        self.save_button.grid(row=0, column=1, sticky="ew", padx=(px(5), 0))
 
-    def _refresh_axis_chips(self):
-        if not hasattr(self, "axis_buttons"):
+        self.copy_button = Pill(actions, self._t("copy"), self.copy_image, kind="soft",
+                                font_=font(9), width=px(148), height=px(30), radius=px(8))
+        self.copy_button.grid(row=1, column=0, sticky="ew", padx=(0, px(5)), pady=(px(7), 0))
+        self.merge_button = Pill(actions, self._t("merge"), lambda: self._start("merge"),
+                                 kind="soft", font_=font(9), width=px(148), height=px(30), radius=px(8))
+        self.merge_button.grid(row=1, column=1, sticky="ew", padx=(px(5), 0), pady=(px(7), 0))
+
+    def _layout_drop_zone(self, event=None):
+        width = self.drop_zone.winfo_width()
+        height = self.drop_zone.winfo_height()
+        if width <= 4 or height <= 4:
             return
-        available = self._available_axes()
-        for name, button in self.axis_buttons.items():
-            if name not in available:
-                button.configure(state="disabled", bg=CARD, fg=DIM,
-                                 disabledforeground=DIM, cursor="")
-                continue
-            on = name in self.axes_enabled
-            button.configure(
-                state="normal", cursor="hand2",
-                bg=ACCENT if on else "#262a31",
-                fg="#04252a" if on else MUTED,
-                activebackground=ACCENT if on else "#333842",
-                activeforeground="#04252a" if on else TEXT,
-            )
-        selected = len(self._selected_axes())
-        self.axes_hint.configure(text=self._t("axes_selected", n=selected) if available else "")
+        self.drop_zone.coords(self._drop_rect, *self._rounded_points(1, 1, width - 1, height - 1, px(10)))
+        self.drop_zone.coords(self.drop_hint, width / 2, height / 2 - px(9))
+        self.drop_zone.coords(self.drop_sub, width / 2, height / 2 + px(12))
 
-    def _toggle_axis(self, name: str):
-        if name in self.axes_enabled:
-            self.axes_enabled.discard(name)
+    @staticmethod
+    def _rounded_points(x1, y1, x2, y2, radius):
+        return [
+            x1 + radius, y1, x2 - radius, y1, x2, y1, x2, y1 + radius,
+            x2, y2 - radius, x2, y2, x2 - radius, y2, x1 + radius, y2,
+            x1, y2, x1, y2 - radius, x1, y1 + radius, x1, y1,
+        ]
+
+    def _drop_hover(self, active: bool, drop: bool = False):
+        if not hasattr(self, "drop_zone") or not self.drop_zone.winfo_exists():
+            return
+        fill = "#1c2b32" if active else FIELD
+        outline = ACCENT if active else BORDER
+        self.drop_zone.itemconfigure(self._drop_rect, fill=fill, outline=outline)
+        if drop:
+            self.drop_zone.itemconfigure(self.drop_hint, text=self._t("drop_release"), fill=ACCENT)
         else:
-            self.axes_enabled.add(name)
-        self._save_ui_settings()
-        self._refresh_axis_chips()
+            self.drop_zone.itemconfigure(self.drop_hint, text=self._t("drop_hint"),
+                                         fill=TEXT if active else MUTED)
+        self.drop_zone.itemconfigure(self.drop_sub, fill=MUTED if active else DIM)
 
-    def _palette_key(self) -> str:
-        label = self.palette_var.get()
-        for key in core.PALETTES:
-            if core.palette_label(key, self.lang) == label:
-                return key
-        return core.DEFAULT_PALETTE
-
-    def _draw_palette_chip(self):
-        chip = getattr(self, "palette_chip", None)
-        if chip is None:
-            return
-        chip.delete("all")
-        width = px(52)
-        height = px(14)
-        stops = core.palette_stops(self.palette)
-        steps = 16
-        for index in range(steps):
-            colour = core.color_at((index + 0.5) / steps, stops)
-            chip.create_rectangle(index * width / steps, 0, (index + 1) * width / steps, height,
-                                  fill="#{:02x}{:02x}{:02x}".format(*colour), width=0)
-
-    def _on_palette(self):
-        self.palette = self._palette_key()
-        self._save_ui_settings()
-        self._draw_palette_chip()
-
-    def _on_opacity(self, value):
-        try:
-            self.bg_opacity = max(0, min(100, int(round(float(value)))))
-        except (TypeError, ValueError):
-            return
-        if hasattr(self, "opacity_label"):
-            self.opacity_label.configure(text=f"{self.bg_opacity}%")
-        self._save_ui_settings()
-
-    def _save_ui_settings(self):
-        self.settings.update(
-            language=self.lang,
-            width=self.width,
-            palette=self.palette,
-            bg_opacity=self.bg_opacity,
-            axes=sorted(self.axes_enabled),
-            merge=self.merge,
-        )
-        save_settings(self.settings)
-
+    # ------------------------------------------------------------ preview
     def _build_preview(self):
-        toolbar = tk.Frame(self.preview, bg=PANEL)
-        toolbar.pack(fill="x", padx=px(12), pady=(px(9), px(7)))
-        self.zoom_label = tk.Label(toolbar, text="—", bg=PANEL, fg=DIM, font=font(8), width=5)
-        self.zoom_label.pack(side="right")
+        toolbar = tk.Frame(self.preview, bg=SURFACE)
+        toolbar.pack(fill="x", padx=px(12), pady=(px(10), px(8)))
+
+        self.zoom_label = tk.Label(toolbar, text="—", bg=SURFACE, fg=DIM, font=font(8, "bold"),
+                                   width=5)
+        self.zoom_label.pack(side="right", padx=(px(6), 0))
         for label, command in (("100%", lambda: self.set_zoom(1.0)),
                                ("＋", lambda: self.zoom_by(1.25)),
                                (self._t("fit"), self.fit_zoom),
                                ("－", lambda: self.zoom_by(0.8))):
-            self._button(toolbar, label, command, kind="ghost", padx_=px(8),
-                         pady=px(2)).pack(side="right", padx=(px(4), 0))
-        tk.Label(toolbar, text=self._t("zoom_hint"), bg=PANEL, fg=DIM,
-                 font=font(8)).pack(side="left")
+            Pill(toolbar, label, command, kind="ghost", font_=font(8),
+                 width=px(34) if len(label) <= 1 else px(52), height=px(24),
+                 radius=px(6)).pack(side="right", padx=(px(4), 0))
 
-        holder = tk.Frame(self.preview, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+        Pill(toolbar, self._t("open_folder"), self.open_out_dir, kind="ghost", font_=font(8),
+             width=px(88), height=px(24), radius=px(6)).pack(side="left", padx=(px(10), 0))
+        Pill(toolbar, self._t("clear_log"), self.clear_log, kind="ghost", font_=font(8),
+             width=px(52), height=px(24), radius=px(6)).pack(side="left", padx=(px(4), 0))
+        tk.Label(toolbar, text=self._t("zoom_hint"), bg=SURFACE, fg=DIM,
+                 font=font(8)).pack(side="left", padx=(px(12), 0))
+
+        holder = tk.Frame(self.preview, bg=CANVAS_BG, highlightthickness=1, highlightbackground=BORDER)
         holder.pack(fill="both", expand=True, padx=px(12))
-        self.canvas = tk.Canvas(holder, bg=CARD, highlightthickness=0, bd=0)
+        self.canvas = tk.Canvas(holder, bg=CANVAS_BG, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", self._on_resize)
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<MouseWheel>", self._on_wheel)
+        self.canvas.bind("<Double-Button-1>", lambda _e: self.fit_zoom())
 
-        log_head = tk.Frame(self.preview, bg=PANEL)
-        log_head.pack(fill="x", padx=px(12), pady=(px(6), px(3)))
-        tk.Label(log_head, text=self._t("log"), bg=PANEL, fg=MUTED,
-                 font=font(8, "bold")).pack(side="left")
-        self._button(log_head, self._t("clear_log"), self.clear_log, kind="ghost",
-                     padx_=px(7), pady=px(1)).pack(side="right")
-        self._button(log_head, self._t("open_folder"),
-                     self.open_out_dir, kind="ghost", padx_=px(7),
-                     pady=px(1)).pack(side="right", padx=(0, px(4)))
-
-        log_holder = tk.Frame(self.preview, bg=PANEL)
-        log_holder.pack(fill="x", padx=px(12), pady=(0, px(9)))
-        self.log_text = tk.Text(log_holder, height=4, bg=CARD, fg=TEXT, insertbackground=TEXT,
+        log_holder = tk.Frame(self.preview, bg=SURFACE)
+        log_holder.pack(fill="x", padx=px(12), pady=(px(8), px(10)))
+        self.log_text = tk.Text(log_holder, height=4, bg=FIELD, fg=MUTED, insertbackground=TEXT,
                                 bd=0, highlightthickness=1, highlightbackground=BORDER,
                                 font=font(9, mono=True), wrap="word", state="disabled",
-                                padx=px(8), pady=px(5))
+                                padx=px(9), pady=px(6))
         self.log_text.pack(side="left", fill="both", expand=True)
         log_bar = ttk.Scrollbar(log_holder, orient="vertical", command=self.log_text.yview,
                                 style="Dark.Vertical.TScrollbar")
@@ -650,53 +834,32 @@ class App:
         for tag, colour in (("info", TEXT), ("dim", DIM), ("ok", OK), ("warn", WARN),
                             ("err", ERR), ("time", DIM)):
             self.log_text.tag_configure(tag, foreground=colour)
+
+        self.toast = Toast(self.preview)
         self._draw()
 
-    def _button(self, parent, text_: str, command, kind="normal", size=9, padx_=None, pady=None):
-        styles = {
-            "normal": dict(bg="#262a31", fg=TEXT,
-                           activebackground="#333842", activeforeground=TEXT),
-            "accent": dict(bg=ACCENT, fg="#04252a", activebackground="#3fd2e4", activeforeground="#04252a"),
-            "pink": dict(bg=PINK, fg="#2b0517", activebackground="#ff5db0", activeforeground="#2b0517"),
-            "ghost": dict(bg=PANEL, fg=MUTED, activebackground="#262a31", activeforeground=TEXT),
-        }
-        options = styles.get(kind, styles["normal"])
-        weight = "bold" if kind in ("accent", "pink") else "normal"
-        return tk.Button(parent, text=text_, command=command, bd=0, relief="flat",
-                         highlightthickness=0, font=font(size, weight), cursor="hand2",
-                         padx=px(padx_ if padx_ is not None else 10),
-                         pady=px(pady if pady is not None else 4), **options)
-
-    # ------------------------------------------------------------ inputs
+    # ------------------------------------------------------------ drag & drop
     def _enable_dnd(self):
         if not HAS_DND:
             return
-        for widget in (self.root, self.canvas, self.drop_zone):
+        for widget in (self.root, self.drop_zone, self.canvas):
             try:
                 widget.drop_target_register(DND_FILES)
                 widget.dnd_bind("<<Drop>>", self._on_drop)
-                widget.dnd_bind("<<DropEnter>>", lambda _e: self._drop_active(True))
-                widget.dnd_bind("<<DropLeave>>", lambda _e: self._drop_active(False))
+                widget.dnd_bind("<<DropEnter>>", lambda _e: self._drop_hover(True, drop=True))
+                widget.dnd_bind("<<DropLeave>>", lambda _e: self._drop_hover(False))
             except Exception:  # noqa: BLE001
                 continue
-
-    def _drop_active(self, active: bool):
-        try:
-            bg = "#1f2a2d" if active else CARD
-            self.drop_zone.configure(bg=bg, highlightbackground=ACCENT if active else BORDER)
-            self.drop_hint.configure(bg=bg, fg=TEXT if active else MUTED)
-            self.drop_sub.configure(bg=bg)
-        except tk.TclError:
-            pass
 
     def _on_drop(self, event):
         try:
             paths = list(self.root.tk.splitlist(event.data))
         except Exception:  # noqa: BLE001
             paths = [str(event.data)]
-        self._drop_active(False)
+        self._drop_hover(False)
         self.add_inputs(paths)
 
+    # ------------------------------------------------------------ inputs
     def add_inputs(self, paths):
         added, skipped, missing = 0, 0, 0
         known = {item.casefold() for item in self.inputs}
@@ -715,11 +878,11 @@ class App:
                 skipped += 1
         self._refresh_list()
         if added:
-            self._log(text(self.lang, "added", n=added), "info")
+            self._log(self._t("added", n=added), "info")
         if skipped:
-            self._log(text(self.lang, "skipped", n=skipped), "warn")
+            self._log(self._t("skipped", n=skipped), "warn")
         if missing:
-            self._log(text(self.lang, "missing", n=missing), "warn")
+            self._log(self._t("missing", n=missing), "warn")
 
     def choose_files(self):
         paths = filedialog.askopenfilenames(
@@ -734,27 +897,34 @@ class App:
 
     def clear_inputs(self):
         self.inputs.clear()
+        self.results = []
+        self.image = None
+        self.current = -1
         self._refresh_list()
+        self._draw()
 
     def _refresh_list(self):
-        if hasattr(self, "listbox"):
-            self.listbox.delete(0, "end")
-            for index, raw in enumerate(self.inputs, 1):
-                path = Path(raw)
-                kind = "DIR" if path.is_dir() else "FILE"
-                self.listbox.insert("end", f"{index:02d}  {kind}  {path.name or path}")
+        if not hasattr(self, "listbox"):
+            return
+        self.listbox.delete(0, "end")
+        for index, raw in enumerate(self.inputs, 1):
+            path = Path(raw)
+            kind = "DIR " if path.is_dir() else "FILE"
+            self.listbox.insert("end", f"{index:02d}  {kind}  {path.name or path}")
         self._refresh_summary()
 
     def _refresh_summary(self):
         if not hasattr(self, "summary_var"):
             return
-        groups = core.group_files(core.collect_inputs(self.inputs)) if self.inputs else []
-        scripts = len(core.collect_inputs(self.inputs)) if self.inputs else 0
+        files = core.collect_inputs(self.inputs) if self.inputs else []
+        groups = core.group_files(files) if files else []
         if not self.inputs:
             self.summary_var.set(self._t("summary_empty"))
         else:
-            self.summary_var.set(self._t("summary", n=len(self.inputs), m=scripts, k=len(groups)))
-        self._refresh_axis_chips()
+            self.summary_var.set(self._t("summary", n=len(self.inputs), m=len(files), k=len(groups)))
+        if hasattr(self, "input_count"):
+            self.input_count.configure(text=str(len(self.inputs)) if self.inputs else "")
+        self._refresh_axis_pills()
 
     def _on_select(self, _event=None):
         selection = self.listbox.curselection()
@@ -772,7 +942,43 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
-    # ------------------------------------------------------------ output dir
+    # ------------------------------------------------------------ axes
+    def _available_axes(self) -> set:
+        if not self.inputs:
+            return set()
+        groups = core.group_files(core.collect_inputs(self.inputs))
+        available = set()
+        for group in groups:
+            available.update(group["axes"].keys())
+        return available
+
+    def _selected_axes(self) -> set:
+        return set(self.axes_enabled) & self._available_axes()
+
+    def _refresh_axis_pills(self):
+        if not hasattr(self, "axis_pills"):
+            return
+        available = self._available_axes()
+        for name, pill in self.axis_pills.items():
+            if name not in available:
+                pill.set_enabled(False)
+                continue
+            pill.set_enabled(True)
+            pill.set_kind("on" if name in self.axes_enabled else "plain")
+        selected = len(self._selected_axes())
+        self.axes_hint.configure(text=self._t("axes_selected", n=selected) if available else "")
+
+    def _toggle_axis(self, name: str):
+        if name not in self._available_axes():
+            return
+        if name in self.axes_enabled:
+            self.axes_enabled.discard(name)
+        else:
+            self.axes_enabled.add(name)
+        self._save_ui_settings()
+        self._refresh_axis_pills()
+
+    # ------------------------------------------------------------ settings
     def _first_folder(self) -> Path | None:
         for raw in self.inputs:
             path = Path(raw)
@@ -791,10 +997,10 @@ class App:
     def _out_text(self) -> str:
         if self.out_override:
             return self.out_override
-        return text(self.lang, "output_auto")
+        return self._t("output_auto")
 
     def choose_out_dir(self):
-        path = filedialog.askdirectory(title=text(self.lang, "output"))
+        path = filedialog.askdirectory(title=self._t("output"))
         if path:
             self.out_override = path
             self.settings["out_dir"] = path
@@ -817,28 +1023,65 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
-    # ------------------------------------------------------------ rendering
-    def _start(self, save: bool):
+    def _on_opacity(self, value):
+        try:
+            self.bg_opacity = max(0, min(100, int(round(float(value)))))
+        except (TypeError, ValueError):
+            return
+        if hasattr(self, "opacity_label"):
+            self.opacity_label.configure(text=f"{self.bg_opacity}%")
+        self._save_ui_settings()
+
+    def _save_ui_settings(self):
+        self.settings.update(
+            language=self.lang,
+            width=self.width,
+            bg_opacity=self.bg_opacity,
+            axes=sorted(self.axes_enabled),
+        )
+        save_settings(self.settings)
+
+    # ------------------------------------------------------------ clipboard
+    def copy_image(self):
+        if self.image is None:
+            self.toast.show(self._t("copy_empty"), "warn")
+            self._log(self._t("copy_empty"), "warn")
+            return
+        try:
+            ok = copy_image_to_clipboard(self.image)
+        except Exception:  # noqa: BLE001
+            ok = False
+        if ok:
+            self.toast.show(self._t("copied"), "ok")
+            self.status_var.set(self._t("copied"))
+            self._log(self._t("copied"), "ok")
+        else:
+            self.toast.show(self._t("copy_failed"), "err")
+            self._log(self._t("copy_failed"), "err")
+
+    # ------------------------------------------------------------ jobs
+    def _start(self, action: str):
         if self.busy:
             return
         if not self.inputs:
             self.status_var.set(self._t("no_input"))
             self._log(self._t("no_input"), "warn")
-            return
-        try:
-            width = int(self.width_var.get().strip())
-        except ValueError:
-            width = -1
-        if not core.MIN_WIDTH <= width <= core.MAX_WIDTH:
-            message = self._t("invalid_width", min=core.MIN_WIDTH, max=core.MAX_WIDTH)
-            self.status_var.set(message)
-            self._log(message, "err")
+            self.toast.show(self._t("no_input"), "warn")
             return
 
-        self.width = width
+        if action != "merge":
+            try:
+                width = int(self.width_var.get().strip())
+            except ValueError:
+                width = -1
+            if not core.MIN_WIDTH <= width <= core.MAX_WIDTH:
+                message = self._t("invalid_width", min=core.MIN_WIDTH, max=core.MAX_WIDTH)
+                self.status_var.set(message)
+                self._log(message, "err")
+                self.toast.show(message, "err")
+                return
+            self.width = width
         self.bg_opacity = max(0, min(100, int(round(self.opacity_var.get()))))
-        self.palette = self._palette_key()
-        self.merge = bool(self.merge_var.get())
         self._save_ui_settings()
 
         enabled = self._selected_axes()
@@ -846,6 +1089,7 @@ class App:
             message = self._t("no_axis")
             self.status_var.set(message)
             self._log(message, "warn")
+            self.toast.show(message, "warn")
             return
 
         files = core.collect_inputs(self.inputs)
@@ -859,51 +1103,49 @@ class App:
         self.busy = True
         self._sync_buttons()
         self.progress.configure(maximum=max(1, len(groups)), value=0)
-        self.status_var.set(self._t("rendering"))
+        self.status_var.set(self._t("merging") if action == "merge" else self._t("rendering"))
+        self._start_pulse()
         thread = threading.Thread(
             target=self._work,
-            args=(groups, out_dir, save, set(enabled), self.palette, self.bg_opacity, self.merge),
+            args=(groups, out_dir, action, set(enabled), self.width, self.bg_opacity),
             daemon=True,
         )
         thread.start()
         self.root.after(60, self._poll)
 
-    def _work(self, groups, out_dir: Path, save: bool, enabled, palette: str,
-              opacity: int, merge: bool):
+    def _work(self, groups, out_dir: Path, action: str, enabled, width: int, opacity: int):
         results = []
+        merged_count = 0
         for index, group in enumerate(groups, 1):
             try:
-                image = core.render_group(group["axes"], self.width, bg_opacity=opacity,
-                                          palette=palette, enabled=enabled)
-                path = None
-                if save:
-                    suffix = "" if opacity >= 100 else f"_bg{opacity}"
-                    path = out_dir / f"{group['name']}_Axes{suffix}.png"
-                    atomic_save(image, path)
-
-                merged_path = None
-                if save and merge:
-                    try:
-                        data = core.merge_axes(group["axes"], enabled=enabled, title=group["name"])
-                        merged_path = out_dir / f"{group['name']}_merged.funscript"
-                        core.write_funscript(merged_path, data)
-                    except Exception as exc:  # noqa: BLE001
-                        merged_path = None
-                        self.queue.put(("log", text(self.lang, "merge_failed", msg=exc), "err"))
-
-                results.append({"label": group["label"], "image": image, "path": path,
-                                "merged": merged_path, "ok": True})
-                self.queue.put(("log", text(self.lang, "done_group", label=group["label"],
-                                            name=path.name if path else "preview"), "ok"))
-                if merged_path is not None:
-                    self.queue.put(("log", text(self.lang, "merge_done",
-                                                n=len(enabled), name=merged_path.name), "ok"))
+                if action == "merge":
+                    data = core.merge_axes(group["axes"], enabled=enabled, title=group["name"])
+                    merged_path = out_dir / f"{group['name']}_merged.funscript"
+                    core.write_funscript(merged_path, data)
+                    merged_count += 1
+                    self.queue.put(("log", text(self.lang, "merge_done", label=group["label"],
+                                                name=merged_path.name), "ok"))
+                    results.append({"label": group["label"], "image": None, "path": None,
+                                    "merged": merged_path, "ok": True})
+                else:
+                    image = core.render_group(group["axes"], width, bg_opacity=opacity,
+                                              enabled=enabled)
+                    path = None
+                    if action == "save":
+                        suffix = "" if opacity >= 100 else f"_bg{opacity}"
+                        path = out_dir / f"{group['name']}_Axes{suffix}.png"
+                        atomic_save(image, path)
+                    results.append({"label": group["label"], "image": image, "path": path,
+                                    "merged": None, "ok": True})
+                    self.queue.put(("log", text(self.lang, "done_group", label=group["label"],
+                                                name=path.name if path else "preview"), "ok"))
             except Exception as exc:  # noqa: BLE001
-                self.queue.put(("log", text(self.lang, "group_failed", label=group["label"], msg=exc), "err"))
+                self.queue.put(("log", text(self.lang, "group_failed",
+                                            label=group["label"], msg=exc), "err"))
                 results.append({"label": group["label"], "image": None, "path": None,
                                 "merged": None, "ok": False})
             self.queue.put(("progress", index, len(groups)))
-        self.queue.put(("done", results, out_dir, save))
+        self.queue.put(("done", results, out_dir, action, merged_count))
 
     def _poll(self):
         try:
@@ -922,27 +1164,73 @@ class App:
         if self.busy:
             self.root.after(70, self._poll)
 
-    def _finish(self, results, out_dir: Path, save: bool):
+    def _finish(self, results, out_dir: Path, action: str, merged_count: int):
         self.busy = False
+        self._stop_pulse()
         self._sync_buttons()
         self.progress.configure(value=self.progress["maximum"])
-        self.results = results
-        ok = [item for item in results if item["ok"]]
+        self.results = [item for item in results if item["ok"]]
+        failed = [item for item in results if not item["ok"]]
+
+        if action == "merge":
+            if merged_count:
+                message = self._t("merged", n=merged_count, path=out_dir)
+                self.status_var.set(message)
+                self.toast.show(message, "ok")
+            elif failed:
+                self.status_var.set(self._t("failed", msg="—"))
+                self.toast.show(self._t("failed", msg="—"), "err")
+            return
+
+        ok = [item for item in self.results if item["image"] is not None]
         if not ok:
-            self.status_var.set(text(self.lang, "failed", msg="—"))
+            self.status_var.set(self._t("failed", msg="—"))
+            self.toast.show(self._t("failed", msg="—"), "err")
             return
         self._show(0)
-        if save:
-            self.status_var.set(text(self.lang, "saved", n=len(ok), path=out_dir))
+        if action == "save":
+            message = self._t("saved", n=len(ok), path=out_dir)
+            self.status_var.set(message)
+            self.toast.show(message, "ok")
         else:
             image = ok[0]["image"]
-            self.status_var.set(text(self.lang, "preview_ready", w=image.width, h=image.height))
+            self.status_var.set(self._t("preview_ready", w=image.width, h=image.height))
 
     def _sync_buttons(self):
-        state = "disabled" if self.busy else "normal"
-        for button in (getattr(self, "preview_button", None), getattr(self, "save_button", None)):
+        state = not self.busy
+        for button in (getattr(self, "preview_button", None), getattr(self, "save_button", None),
+                       getattr(self, "merge_button", None), getattr(self, "copy_button", None)):
             if button is not None:
-                button.configure(state=state)
+                button.set_enabled(state and (button is not getattr(self, "copy_button", None)
+                                              or self.image is not None))
+
+    def _start_pulse(self):
+        self._stop_pulse()
+
+        def step(colour_index=0):
+            colours = (ACCENT, "#2f6f68")
+            if not self.busy:
+                return
+            try:
+                self.status_dot.itemconfigure(self._dot_item,
+                                              fill=colours[colour_index % len(colours)])
+            except tk.TclError:
+                return
+            self._pulse_job = self.root.after(420, lambda: step(colour_index + 1))
+
+        step()
+
+    def _stop_pulse(self):
+        if self._pulse_job:
+            try:
+                self.root.after_cancel(self._pulse_job)
+            except Exception:  # noqa: BLE001
+                pass
+            self._pulse_job = None
+        try:
+            self.status_dot.itemconfigure(self._dot_item, fill=OK if self.results else DIM)
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------ preview
     def _show(self, index: int):
@@ -952,6 +1240,7 @@ class App:
         item = self.results[index]
         self.image = item["image"]
         self.zoom = None
+        self._sync_buttons()
         self._draw()
 
     def _draw(self):
@@ -964,9 +1253,9 @@ class App:
         height = max(canvas.winfo_height(), px(80))
         if self.image is None:
             canvas.create_text(width / 2, height / 2 - px(12), text="MHeatmap",
-                               fill=MUTED, font=font(15, "bold"))
+                               fill=DIM, font=font(16, "bold"))
             canvas.create_text(width / 2, height / 2 + px(16),
-                               text=text(self.lang, "drop_hint"), fill=DIM, font=font(9))
+                               text=self._t("drop_hint"), fill=DIM, font=font(9))
             self.zoom_label.configure(text="—")
             return
 
@@ -1039,7 +1328,7 @@ class App:
         self._image_pos = self._clamp(image_x + event.x - start_x, image_y + event.y - start_y)
         self.canvas.coords(self._image_item, *self._image_pos)
 
-    # ------------------------------------------------------------ log / misc
+    # ------------------------------------------------------------ log
     def _log(self, message: str, level: str = "info"):
         if not hasattr(self, "log_text"):
             return
@@ -1063,14 +1352,19 @@ class App:
 
         traceback.print_exception(exc_type, exc_value, exc_tb)
 
+    # ------------------------------------------------------------ misc
     def _bind_shortcuts(self):
-        self.root.bind("<F5>", lambda _e: self._start(False))
-        self.root.bind("<Control-s>", lambda _e: self._start(True))
+        self.root.bind("<F5>", lambda _e: self._start("preview"))
+        self.root.bind("<Control-s>", lambda _e: self._start("save"))
+        self.root.bind("<Control-S>", lambda _e: self._start("save"))
         self.root.bind("<Control-o>", lambda _e: self.choose_files())
-        self.root.bind("<Control-S>", lambda _e: self._start(True))
+        self.root.bind("<Control-c>", lambda _e: self.copy_image())
+        self.root.bind("<Control-m>", lambda _e: self._start("merge"))
 
     def on_close(self):
+        self._stop_pulse()
         self.root.destroy()
+
 
 
 # ---------------------------------------------------------------- cli
@@ -1083,7 +1377,7 @@ def selftest(paths) -> int:
         print("no .funscript files found")
         return 1
     groups = core.group_files(files)
-    print(f"files={len(files)} groups={len(groups)} palettes={len(core.PALETTES)}")
+    print(f"files={len(files)} groups={len(groups)}")
     ok = True
     for group in groups:
         axes = group["axes"]

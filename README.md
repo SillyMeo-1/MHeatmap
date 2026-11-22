@@ -11,7 +11,7 @@ and an optional multi-axis `.funscript` export.
 English + 中文 UI. **English by default**; the first launch asks which language
 you want, and you can switch anytime from the top bar.
 
-![English UI](shots/ui-v1.1.png)
+![English UI](shots/ui-v1.2.png)
 
 ## Install (Windows)
 
@@ -31,9 +31,8 @@ py -3 app.py
 
 | First launch | 中文界面 | Axis + palette + opacity |
 |---|---|---|
-| ![language](shots/first-run-language.png) | ![中文](shots/ui-chinese.png) | ![controls](shots/ui-v1.1.png) |
+| ![language](shots/first-run-language.png) | ![中文](shots/ui-chinese.png) | ![controls](shots/ui-v1.2.png) |
 
-Palettes: ![palettes](shots/palettes.png) · Background opacity: ![opacity](shots/opacity.png)
 
 
 ```
@@ -62,21 +61,22 @@ MHeatmap/
 ## Features
 
 - **One image per script set**: every axis gets a row (L0/L1/L2/R0/R1/R2 + vib/pump),
-  with a translucent filename banner (`name.surge.funscript::surge`), Duration /
-  Actions / MaxSpeed / AvgSpeed stats, a heat band and a speed curve.
-- **Pick the axes**: after loading a multi-axis set, toggle L0…R2 chips in the
-  sidebar — only the chosen axes are drawn (and the image height follows).
-- **Merge to one file**: tick “Also export one multi-axis .funscript” to get
-  `xxx_merged.funscript` — funscript **1.1** (`actions` = stroke axis, `axes` = the
-  other channels with `id` + `actions`), which MultiFunPlayer and similar players
-  can load as a single file.
-- **Five palettes**: OFS Rainbow (default), Classic, Inferno, Viridis, Grayscale —
-  each with its own gamma so low speeds still show colour.
-- **Background opacity slider**: 0 % = fully transparent PNG, 100 % = solid.
-  Intermediate values are supported; output names carry `_bg<value>` (e.g.
-  `_Axes_bg50.png`) so different settings do not overwrite each other.
+  with a translucent filename banner (`name.surge.funscript::surge`),
+  Duration / Actions / MaxSpeed / AvgSpeed stats, a heat band and a speed curve.
+- **Pick the axes**: toggle the L0…R2 pills; only the chosen axes are drawn and
+  the image height follows (fewer axes → shorter image).
+- **Copy image** (or `Ctrl+C`): puts the current preview on the clipboard as
+  CF_DIB **and** PNG, so Paint, Word, browsers and chat apps all paste it.
+- **Merge .funscript** is its own button: it only writes
+  `xxx_merged.funscript` (funscript **1.1** — `actions` = stroke axis, `axes` =
+  the other channels with `id` + `actions`) without generating any PNG.
+- **Background opacity slider**: 0 % = fully transparent PNG, 100 % = solid,
+  values in between work too; output names carry `_bg<value>` when it is not 100.
+- **One palette** — the OFS rainbow ramp (the extra palettes were removed on request).
+- **Interactive UI**: rounded buttons and pills with hover/press states, a card
+  layout, mint accent, a status dot that pulses while working, and toast messages
+  for copy / save / merge.
 - **English + 中文 UI**, English by default, first launch asks for the language.
-- **Drag & drop**, preview with zoom/pan, batch save, remembered settings.
 - **Single-file Windows build**: no installer, no Python.
 
 ## Naming
