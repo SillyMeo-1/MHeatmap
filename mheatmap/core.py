@@ -1,4 +1,4 @@
-"""MHeatmap — core rendering.
+﻿"""MHeatmap — core rendering.
 
 Reads .funscript files and draws the row-style heatmap: one row per axis,
 a filename banner, speed stats, a heat band and a speed curve.
@@ -17,7 +17,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 APP_NAME = "MHeatmap"
-VERSION = "1.0"
+VERSION = "1.1"
 
 # ------------------------------------------------------------------ geometry
 TOP_MARGIN = 4
@@ -50,8 +50,8 @@ AXIS_TOKENS = {token: name for name, _colour, tokens in AXES for token in tokens
 SEPARATORS = (".", "_", "-", " ")
 
 # ------------------------------------------------------------------ palettes
-# Heat colour ramp (0..1), the familiar OFS-style rainbow.
-PALETTE = (
+# Each palette is a 0..1 ramp. "ofs" is the familiar OFS rainbow.
+OFS_STOPS = (
     (0.000, (0, 0, 0)),
     (0.025, (0, 128, 122)),
     (0.050, (0, 255, 138)),
@@ -84,7 +84,51 @@ PALETTE = (
     (1.000, (87, 70, 0)),
 )
 
-# Curve colour ramp, also speed driven (starts cyan like the original).
+CLASSIC_STOPS = (
+    (0.00, (18, 18, 20)),
+    (0.18, (24, 55, 160)),
+    (0.36, (0, 170, 210)),
+    (0.54, (20, 210, 80)),
+    (0.72, (245, 215, 45)),
+    (0.88, (240, 105, 30)),
+    (1.00, (235, 35, 35)),
+)
+
+INFERNO_STOPS = (
+    (0.00, (0, 0, 4)),
+    (0.15, (22, 11, 57)),
+    (0.30, (66, 10, 104)),
+    (0.45, (106, 23, 110)),
+    (0.60, (147, 38, 103)),
+    (0.75, (188, 55, 84)),
+    (0.90, (228, 86, 45)),
+    (1.00, (252, 255, 164)),
+)
+
+VIRIDIS_STOPS = (
+    (0.00, (68, 1, 84)),
+    (0.25, (59, 82, 139)),
+    (0.50, (33, 145, 140)),
+    (0.75, (94, 201, 98)),
+    (1.00, (253, 231, 37)),
+)
+
+GRAY_STOPS = (
+    (0.00, (0, 0, 0)),
+    (1.00, (255, 255, 255)),
+)
+
+PALETTES = {
+    "ofs": ("OFS Rainbow", "OFS 彩虹", OFS_STOPS, 1.0),
+    "classic": ("Classic", "经典", CLASSIC_STOPS, 0.45),
+    "inferno": ("Inferno", "熔岩", INFERNO_STOPS, 0.40),
+    "viridis": ("Viridis", "青绿", VIRIDIS_STOPS, 0.40),
+    "gray": ("Grayscale", "灰度", GRAY_STOPS, 0.42),
+}
+DEFAULT_PALETTE = "ofs"
+
+# Backwards compatibility: the old single-palette names.
+PALETTE = OFS_STOPS
 CURVE_PALETTE = (
     (0.000, (0, 238, 255)),
     (0.075, (0, 247, 0)),
@@ -95,6 +139,22 @@ CURVE_PALETTE = (
     (0.600, (105, 60, 0)),
     (1.000, (0, 88, 74)),
 )
+
+
+def palette_stops(name: str):
+    return PALETTES.get(name, PALETTES[DEFAULT_PALETTE])[2]
+
+
+def palette_gamma(name: str) -> float:
+    """Gamma applied before the colour lookup, so every ramp uses its full range
+    even when most speed values are low."""
+    return PALETTES.get(name, PALETTES[DEFAULT_PALETTE])[3]
+
+
+def palette_label(name: str, lang: str = "en") -> str:
+    entry = PALETTES.get(name, PALETTES[DEFAULT_PALETTE])
+    return entry[1] if lang == "zh" else entry[0]
+
 
 BUNDLED_FONT = "assets/NotoSansCJKsc-Regular.otf"
 _font_cache: dict[int, ImageFont.FreeTypeFont] = {}
@@ -316,7 +376,8 @@ def draw_stats(image, x, y, w, actions, duration_ms) -> None:
                        blur=1.4, glow_alpha=230, stroke_width=2)
 
 
-def draw_band(image, actions, duration_ms, x, y, width, max_speed) -> None:
+def draw_band(image, actions, duration_ms, x, y, width, max_speed, stops=OFS_STOPS,
+              gamma: float = 1.0) -> None:
     """Heat band: one column per pixel, alpha fades out towards the bottom."""
     if len(actions) < 2 or duration_ms <= 0 or width <= 0:
         return
@@ -341,7 +402,7 @@ def draw_band(image, actions, duration_ms, x, y, width, max_speed) -> None:
         if not speed:
             columns.append((0, 0, 0, 0))
             continue
-        color = color_at(intensity, PALETTE)
+        color = color_at(clamp(intensity ** gamma, 0.0, 1.0), stops)
         alpha = int(round((92 + 118 * math.sqrt(intensity)) * BAND_ALPHA_BOOST))
         columns.append((color[0], color[1], color[2], min(255, alpha)))
 
@@ -359,7 +420,8 @@ def draw_band(image, actions, duration_ms, x, y, width, max_speed) -> None:
     image.alpha_composite(band, (x, y))
 
 
-def draw_curve(image, actions, duration_ms, x, y, width, height, max_speed) -> None:
+def draw_curve(image, actions, duration_ms, x, y, width, height, max_speed,
+               stops=CURVE_PALETTE) -> None:
     if len(actions) < 2 or duration_ms <= 0:
         return
     scale = 3
@@ -377,22 +439,30 @@ def draw_curve(image, actions, duration_ms, x, y, width, height, max_speed) -> N
         if delta <= 0:
             continue
         speed = abs(p1 - p0) * 1000.0 / delta
-        rgb = color_at(clamp(speed / max_speed, 0.0, 1.0), CURVE_PALETTE)
+        rgb = color_at(clamp(speed / max_speed, 0.0, 1.0), stops)
         draw.line((point((a0, p0)), point((a1, p1))), fill=(*rgb, 190), width=scale)
     overlay = overlay.resize((width, height), Image.LANCZOS)
     image.alpha_composite(overlay, (x, y))
 
 
-def render_group(axes: dict[str, Path], width: int = DEFAULT_WIDTH, transparent: bool = False,
+def render_group(axes: dict[str, Path], width: int = DEFAULT_WIDTH, bg_opacity: int = 100,
+                 palette: str = DEFAULT_PALETTE, enabled=None,
                  max_speed: float = DEFAULT_MAX_SPEED) -> Image.Image:
-    """Draw one image for a group of axis scripts."""
-    rows = [axis for axis in AXES if axis[0] in axes]
+    """Draw one image for a group of axis scripts.
+
+    bg_opacity: 0 = fully transparent background, 100 = opaque.
+    enabled: optional set of axis names to draw (default: every axis present).
+    """
+    wanted = set(enabled) if enabled is not None else None
+    rows = [axis for axis in AXES
+            if axis[0] in axes and (wanted is None or axis[0] in wanted)]
     if not rows:
-        raise ValueError("no axis scripts in this group")
+        raise ValueError("no axis scripts selected")
 
     width = int(clamp(int(width), MIN_WIDTH, MAX_WIDTH))
     height = TOP_MARGIN + ROW_HEIGHT * len(rows)
-    image = Image.new("RGBA", (width, height), (0, 0, 0, 0) if transparent else (18, 18, 18, 255))
+    bg_alpha = int(clamp(int(bg_opacity), 0, 100) * 255 // 100)
+    image = Image.new("RGBA", (width, height), (18, 18, 18, bg_alpha))
     draw = ImageDraw.Draw(image)
     plot_x = AXIS_COLUMN
     plot_w = width - plot_x - RIGHT_PAD
@@ -405,14 +475,16 @@ def render_group(axes: dict[str, Path], width: int = DEFAULT_WIDTH, transparent:
         loaded[axis_name] = (actions, duration_ms)
         duration = max(duration, duration_ms)
     duration = duration or 1.0
+    stops = palette_stops(palette)
+    gamma = palette_gamma(palette)
 
     for index, (axis_name, axis_colour, _tokens) in enumerate(rows):
         y = TOP_MARGIN + index * ROW_HEIGHT
         actions, axis_duration = loaded[axis_name]
         use_duration = duration or axis_duration
 
-        if not transparent:
-            draw.rectangle((0, y, width, y + ROW_HEIGHT), fill=(24, 24, 24))
+        if bg_alpha:
+            draw.rectangle((0, y, width, y + ROW_HEIGHT), fill=(24, 24, 24, bg_alpha))
         draw.rectangle((0, y, plot_x, y + ROW_HEIGHT), fill=(*axis_colour, 255))
         font_axis = load_font(56)
         while font_axis.size > 18 and draw.textlength(axis_name, font=font_axis) > plot_x - 10:
@@ -426,7 +498,7 @@ def render_group(axes: dict[str, Path], width: int = DEFAULT_WIDTH, transparent:
         )
         image.alpha_composite(banner, (plot_x, y))
 
-        draw_band(image, actions, use_duration, plot_x, y, plot_w, max_speed)
+        draw_band(image, actions, use_duration, plot_x, y, plot_w, max_speed, stops, gamma)
 
         label = row_label(axes[axis_name])
         max_text = plot_w - stats_w - 24
@@ -445,8 +517,60 @@ def render_group(axes: dict[str, Path], width: int = DEFAULT_WIDTH, transparent:
 
         draw_stats(image, plot_x + plot_w - stats_w - 4, y + 2, stats_w, actions, use_duration)
         draw_curve(image, actions, use_duration, plot_x, y + BAND_HEIGHT + 4, plot_w,
-                   ROW_HEIGHT - BAND_HEIGHT - 8, max_speed)
+                   ROW_HEIGHT - BAND_HEIGHT - 8, max_speed, stops)
         draw.line((plot_x, y + ROW_HEIGHT - 1, plot_x + plot_w, y + ROW_HEIGHT - 1),
                   fill=(0, 150, 170, 255), width=1)
 
     return image
+
+
+# ------------------------------------------------------------------ merging
+def merge_axes(axes: dict[str, Path], enabled=None, title: str = "") -> dict:
+    """Build a single-file multi-axis funscript (funscript 1.1 style).
+
+    The main ``actions`` array is the stroke axis (L0 when selected, otherwise the
+    first selected axis); the other axes go into ``axes`` as {id, actions}.
+    """
+    wanted = set(enabled) if enabled is not None else None
+    order = [axis[0] for axis in AXES
+             if axis[0] in axes and (wanted is None or axis[0] in wanted)]
+    if not order:
+        raise ValueError("no axis scripts selected")
+
+    main_axis = "L0" if "L0" in order else order[0]
+    main_actions, duration = read_funscript(axes[main_axis])
+    others = []
+    for axis_name in order:
+        if axis_name == main_axis:
+            continue
+        actions, axis_duration = read_funscript(axes[axis_name])
+        others.append({"id": axis_name, "actions": [[int(at), int(pos)] for at, pos in actions]})
+        duration = max(duration, axis_duration)
+
+    data = {
+        "version": "1.1",
+        "inverted": False,
+        "range": 100,
+        "actions": [[int(at), int(pos)] for at, pos in main_actions],
+        "axes": others,
+        "metadata": {
+            "title": title or Path(axes[main_axis]).stem,
+            "duration": int(round(duration)),
+            "generator": f"{APP_NAME} {VERSION}",
+        },
+    }
+    return data
+
+
+def write_funscript(path, data: dict) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_name(f".{path.name}.tmp")
+    try:
+        with pending.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, separators=(",", ":"))
+        pending.replace(path)
+    finally:
+        pending.unlink(missing_ok=True)
+    return path
+

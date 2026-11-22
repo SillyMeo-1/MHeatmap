@@ -1,16 +1,17 @@
-# MHeatmap
+﻿# MHeatmap
 
 [![build](https://github.com/SillyMeo-1/MHeatmap/actions/workflows/build.yml/badge.svg)](https://github.com/SillyMeo-1/MHeatmap/actions/workflows/build.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Funscript Heatmap Generator** — a small desktop app that turns `.funscript`
 files into one row-per-axis heatmap (filename banner, speed stats, heat band,
-speed curve), with optional transparent background.
+speed curve), with axis selection, five palettes, adjustable background opacity
+and an optional multi-axis `.funscript` export.
 
 English + 中文 UI. **English by default**; the first launch asks which language
 you want, and you can switch anytime from the top bar.
 
-![English UI](shots/ui-english.png)
+![English UI](shots/ui-v1.1.png)
 
 ## Install (Windows)
 
@@ -28,9 +29,11 @@ py -3 app.py
 
 ## Screenshots
 
-| First launch | 中文界面 | Transparent |
+| First launch | 中文界面 | Axis + palette + opacity |
 |---|---|---|
-| ![language](shots/first-run-language.png) | ![中文](shots/ui-chinese.png) | ![transparent](shots/transparent-preview.png) |
+| ![language](shots/first-run-language.png) | ![中文](shots/ui-chinese.png) | ![controls](shots/ui-v1.1.png) |
+
+Palettes: ![palettes](shots/palettes.png) · Background opacity: ![opacity](shots/opacity.png)
 
 
 ```
@@ -61,17 +64,20 @@ MHeatmap/
 - **One image per script set**: every axis gets a row (L0/L1/L2/R0/R1/R2 + vib/pump),
   with a translucent filename banner (`name.surge.funscript::surge`), Duration /
   Actions / MaxSpeed / AvgSpeed stats, a heat band and a speed curve.
-- **Transparent background**: PNG keeps the alpha channel, so the heatmap can be
-  laid over video thumbnails or a player UI. Output names get a `_transparent` suffix
-  so the opaque version is not overwritten.
-- **Bilingual UI**, English first. First launch shows a language picker; the choice
-  is stored in `%APPDATA%\MHeatmap\settings.json`.
-- **Drag & drop**: drop files or a folder onto the window (or pass paths on the
-  command line — the app previews them right away).
-- **Batch**: one image per group; the output folder defaults to
-  `<script folder>/heatmaps` and can be changed in the UI.
-- **Minimal UI**: one mode, three settings (width, transparent, output), a preview
-  with zoom/pan, a 4-line log and a status bar.
+- **Pick the axes**: after loading a multi-axis set, toggle L0…R2 chips in the
+  sidebar — only the chosen axes are drawn (and the image height follows).
+- **Merge to one file**: tick “Also export one multi-axis .funscript” to get
+  `xxx_merged.funscript` — funscript **1.1** (`actions` = stroke axis, `axes` = the
+  other channels with `id` + `actions`), which MultiFunPlayer and similar players
+  can load as a single file.
+- **Five palettes**: OFS Rainbow (default), Classic, Inferno, Viridis, Grayscale —
+  each with its own gamma so low speeds still show colour.
+- **Background opacity slider**: 0 % = fully transparent PNG, 100 % = solid.
+  Intermediate values are supported; output names carry `_bg<value>` (e.g.
+  `_Axes_bg50.png`) so different settings do not overwrite each other.
+- **English + 中文 UI**, English by default, first launch asks for the language.
+- **Drag & drop**, preview with zoom/pan, batch save, remembered settings.
+- **Single-file Windows build**: no installer, no Python.
 
 ## Naming
 
@@ -111,8 +117,12 @@ Dropping a single file also picks up its sibling axes.
 
 ## Output
 
-`<group>_Axes.png` (opaque) or `<group>_Axes_transparent.png` (transparent).
-Default width 1380 px, row height 104 px, so six axes give a 1380×628 image.
+- `<group>_Axes.png` — solid background (100 %).
+- `<group>_Axes_bg<value>.png` — any other background opacity (0 = transparent).
+- `<group>_merged.funscript` — when “Also export one multi-axis .funscript” is on.
+
+Default width 1380 px, row height 104 px, so six axes give a 1380×628 image
+(fewer selected axes → shorter image).
 
 ## Checks
 

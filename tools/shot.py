@@ -1,4 +1,4 @@
-﻿"""启动 MHeatmap 并用 PrintWindow 抓窗口图（不抢前台、DPI 正确）。
+"""启动 MHeatmap 并用 PrintWindow 抓窗口图（不抢前台、DPI 正确）。
 
 用法：
     py -3 tools/shot.py out.png [--lang en|zh] [--inputs PATH] [--first-run] [--wait 12]
@@ -52,16 +52,27 @@ def window_title(hwnd) -> str:
 
 
 def find_window(prefix: str):
+    """Return the biggest visible window whose title starts with `prefix`.
+
+    Explorer windows named after the folder ("MHeatmap - 文件资源管理器") also
+    match the prefix, so pick by exact title first, then by window area.
+    """
     user32().EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
     found = []
 
     def callback(hwnd, _param):
-        if user32().IsWindowVisible(hwnd) and window_title(hwnd).startswith(prefix):
-            found.append(hwnd)
+        if user32().IsWindowVisible(hwnd):
+            title = window_title(hwnd)
+            if title.startswith(prefix):
+                rect = wintypes.RECT()
+                user32().GetWindowRect(hwnd, ctypes.byref(rect))
+                area = max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
+                found.append((title != prefix, -area, hwnd))
         return True
 
     user32().EnumWindows(WNDENUMPROC(callback), 0)
-    return found[-1] if found else None
+    found.sort()
+    return found[0][2] if found else None
 
 
 def capture(hwnd) -> Image.Image:
@@ -146,6 +157,19 @@ def main() -> int:
         return 1
 
     time.sleep(wait)
+
+    # 窗口可能在启动早期被找到（Tk 还没布局完），等到尺寸稳定再抓
+    rect = wintypes.RECT()
+    user32().GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    for _ in range(20):
+        candidate = find_window(TITLE)
+        if candidate:
+            hwnd = candidate
+        user32().GetWindowRect(hwnd, ctypes.byref(rect))
+        if rect.right - rect.left > 400 and rect.bottom - rect.top > 300:
+            break
+        time.sleep(0.5)
+
     image = capture(hwnd)
     out.parent.mkdir(parents=True, exist_ok=True)
     image.save(out)

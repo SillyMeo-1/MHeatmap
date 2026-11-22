@@ -35,7 +35,7 @@ except Exception:  # noqa: BLE001
     HAS_DND = False
 
 APP_TITLE = "MHeatmap"
-UI_VERSION = "1.0"
+UI_VERSION = "1.1"
 
 # ---------------------------------------------------------------- theme
 BG = "#14161a"
@@ -162,7 +162,13 @@ class App:
         self.lang = self.settings.get("language") or DEFAULT_LANGUAGE
         self.inputs: list[str] = []
         self.width = int(self.settings.get("width") or core.DEFAULT_WIDTH)
-        self.transparent = bool(self.settings.get("transparent", False))
+        legacy_alpha = 0 if self.settings.get("transparent") else 100
+        self.bg_opacity = int(self.settings.get("bg_opacity", legacy_alpha))
+        self.palette = str(self.settings.get("palette") or core.DEFAULT_PALETTE)
+        stored_axes = self.settings.get("axes")
+        self.axes_enabled = (set(stored_axes) if isinstance(stored_axes, list)
+                             else {axis[0] for axis in core.AXES})
+        self.merge = bool(self.settings.get("merge", False))
         self.out_override = str(self.settings.get("out_dir") or "")
         self.results: list[dict] = []
         self.current = -1
@@ -244,6 +250,15 @@ class App:
                         bordercolor=BORDER, lightcolor=CARD, darkcolor=CARD)
         style.configure("TFrame", background=PANEL)
         style.configure("TLabel", background=PANEL, foreground=TEXT)
+        style.configure("Dark.TCombobox", fieldbackground=CARD, background=CARD, foreground=TEXT,
+                        arrowcolor=MUTED, bordercolor=BORDER, lightcolor=CARD, darkcolor=CARD,
+                        selectbackground=CARD, selectforeground=TEXT, padding=px(3))
+        style.map("Dark.TCombobox",
+                  fieldbackground=[("readonly", CARD), ("disabled", PANEL)],
+                  foreground=[("disabled", DIM)],
+                  selectbackground=[("readonly", CARD)],
+                  selectforeground=[("readonly", TEXT)],
+                  arrowcolor=[("disabled", BORDER)])
         style.configure("Dark.TEntry", fieldbackground=CARD, foreground=TEXT, insertcolor=TEXT,
                         bordercolor=BORDER, lightcolor=CARD, darkcolor=CARD, padding=px(5))
         style.map("Dark.TEntry", bordercolor=[("focus", ACCENT)], foreground=[("disabled", DIM)])
@@ -257,6 +272,8 @@ class App:
         style.map("Dark.Vertical.TScrollbar", background=[("active", BORDER)])
         style.configure("Dark.Horizontal.TProgressbar", troughcolor=CARD, background=ACCENT,
                         bordercolor=CARD, lightcolor=ACCENT, darkcolor=ACCENT, thickness=px(5))
+        style.configure("Dark.Horizontal.TScale", background=PANEL, troughcolor=CARD,
+                        bordercolor=BORDER, lightcolor=ACCENT, darkcolor=ACCENT)
 
     # ------------------------------------------------------------ language
     def _ask_language(self):
@@ -361,6 +378,13 @@ class App:
         self._enable_dnd()
         self._bind_shortcuts()
         self._refresh_list()
+        self.root.after(80, self._focus_canvas)
+
+    def _focus_canvas(self):
+        try:
+            self.canvas.focus_set()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _build_sidebar(self):
         pad = px(14)
@@ -369,10 +393,10 @@ class App:
         tk.Frame(footer, bg=BORDER, height=1).pack(fill="x")
         box = tk.Frame(footer, bg=PANEL)
         box.pack(fill="x", padx=pad, pady=px(9))
-        self.preview_button = self._button(box, text(self.lang, "preview"), lambda: self._start(False),
+        self.preview_button = self._button(box, self._t("preview"), lambda: self._start(False),
                                            kind="accent", size=10, pady=px(8))
         self.preview_button.pack(side="left", fill="x", expand=True)
-        self.save_button = self._button(box, text(self.lang, "save"), lambda: self._start(True),
+        self.save_button = self._button(box, self._t("save"), lambda: self._start(True),
                                         kind="pink", size=10, pady=px(8))
         self.save_button.pack(side="left", fill="x", expand=True, padx=(px(7), 0))
 
@@ -380,18 +404,18 @@ class App:
                                   highlightbackground=BORDER, height=px(64))
         self.drop_zone.pack(fill="x", padx=pad, pady=(px(12), px(8)))
         self.drop_zone.pack_propagate(False)
-        self.drop_hint = tk.Label(self.drop_zone, text=text(self.lang, "drop_hint"),
+        self.drop_hint = tk.Label(self.drop_zone, text=self._t("drop_hint"),
                                   bg=CARD, fg=MUTED, font=font(9))
         self.drop_hint.pack(expand=True)
-        self.drop_sub = tk.Label(self.drop_zone, text=text(self.lang, "drop_sub"),
+        self.drop_sub = tk.Label(self.drop_zone, text=self._t("drop_sub"),
                                  bg=CARD, fg=DIM, font=font(8))
         self.drop_sub.pack(expand=True)
 
         row = tk.Frame(self.sidebar, bg=PANEL)
         row.pack(fill="x", padx=pad)
-        self._button(row, text(self.lang, "add_files"), self.choose_files).pack(side="left")
-        self._button(row, text(self.lang, "add_folder"), self.choose_folder).pack(side="left", padx=(px(6), 0))
-        self._button(row, text(self.lang, "clear"), self.clear_inputs, kind="ghost").pack(side="right")
+        self._button(row, self._t("add_files"), self.choose_files).pack(side="left")
+        self._button(row, self._t("add_folder"), self.choose_folder).pack(side="left", padx=(px(6), 0))
+        self._button(row, self._t("clear"), self.clear_inputs, kind="ghost").pack(side="right")
 
         holder = tk.Frame(self.sidebar, bg=PANEL)
         holder.pack(fill="x", padx=pad, pady=(px(8), 0))
@@ -407,36 +431,177 @@ class App:
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
         self.listbox.bind("<Double-Button-1>", self._on_open_input)
 
-        self.summary_var = tk.StringVar(value=text(self.lang, "summary_empty"))
+        self.summary_var = tk.StringVar(value=self._t("summary_empty"))
         tk.Label(self.sidebar, textvariable=self.summary_var, bg=PANEL, fg=MUTED, font=font(8),
                  anchor="w", justify="left", wraplength=px(300)).pack(fill="x", padx=pad, pady=(px(6), 0))
 
+        # ---- axes selection
+        head = tk.Frame(self.sidebar, bg=PANEL)
+        head.pack(fill="x", padx=pad, pady=(px(8), px(3)))
+        tk.Label(head, text=self._t("axes"), bg=PANEL, fg=MUTED,
+                 font=font(8, "bold")).pack(side="left")
+        self.axes_hint = tk.Label(head, text="", bg=PANEL, fg=DIM, font=font(8))
+        self.axes_hint.pack(side="right")
+
+        chips = tk.Frame(self.sidebar, bg=PANEL)
+        chips.pack(fill="x", padx=pad)
+        self.axis_buttons = {}
+        for axis_name, _colour, _tokens in core.AXES:
+            button = tk.Button(chips, text=axis_name, bd=0, relief="flat", highlightthickness=0,
+                               cursor="hand2", font=font(8, "bold"), width=3, padx=0, pady=px(1),
+                               command=lambda name=axis_name: self._toggle_axis(name))
+            button.pack(side="left", padx=(0, px(3)))
+            self.axis_buttons[axis_name] = button
+
         tk.Frame(self.sidebar, bg=BORDER, height=1).pack(fill="x", padx=pad, pady=(px(10), 0))
-        tk.Label(self.sidebar, text=text(self.lang, "settings"), bg=PANEL, fg=MUTED,
+        tk.Label(self.sidebar, text=self._t("settings"), bg=PANEL, fg=MUTED,
                  font=font(8, "bold")).pack(anchor="w", padx=pad, pady=(px(8), px(4)))
 
-        options = tk.Frame(self.sidebar, bg=PANEL)
-        options.pack(fill="x", padx=pad)
-        tk.Label(options, text=text(self.lang, "width"), bg=PANEL, fg=MUTED,
-                 font=font(8)).pack(side="left")
+        # ---- width
+        width_row = tk.Frame(self.sidebar, bg=PANEL)
+        width_row.pack(fill="x", padx=pad, pady=(0, px(5)))
+        tk.Label(width_row, text=self._t("width"), bg=PANEL, fg=MUTED, font=font(8),
+                 width=10, anchor="w").pack(side="left")
         self.width_var = tk.StringVar(value=str(self.width))
-        ttk.Entry(options, textvariable=self.width_var, style="Dark.TEntry", font=font(9),
-                  width=7).pack(side="left", padx=(px(6), px(12)))
-        self.transparent_var = tk.BooleanVar(value=self.transparent)
-        ttk.Checkbutton(options, text=text(self.lang, "transparent"), variable=self.transparent_var,
-                        style="Dark.TCheckbutton").pack(side="left")
+        ttk.Entry(width_row, textvariable=self.width_var, style="Dark.TEntry",
+                  font=font(9), width=7).pack(side="left")
 
+        # ---- palette
+        palette_row = tk.Frame(self.sidebar, bg=PANEL)
+        palette_row.pack(fill="x", padx=pad, pady=(0, px(5)))
+        tk.Label(palette_row, text=self._t("palette"), bg=PANEL, fg=MUTED, font=font(8),
+                 width=10, anchor="w").pack(side="left")
+        self.palette_var = tk.StringVar(value=core.palette_label(self.palette, self.lang))
+        self.palette_box = ttk.Combobox(
+            palette_row, textvariable=self.palette_var, state="readonly",
+            style="Dark.TCombobox", font=font(9), width=16,
+            values=[core.palette_label(key, self.lang) for key in core.PALETTES],
+        )
+        self.palette_box.pack(side="left")
+        self.palette_box.bind("<<ComboboxSelected>>", lambda _event: self._on_palette())
+        self.palette_chip = tk.Canvas(palette_row, width=px(52), height=px(14), bg=PANEL,
+                                      highlightthickness=0, bd=0)
+        self.palette_chip.pack(side="right")
+        self._draw_palette_chip()
+
+        # ---- background opacity
+        opacity_row = tk.Frame(self.sidebar, bg=PANEL)
+        opacity_row.pack(fill="x", padx=pad, pady=(0, px(4)))
+        tk.Label(opacity_row, text=self._t("bg_opacity"), bg=PANEL, fg=MUTED, font=font(8),
+                 width=10, anchor="w").pack(side="left")
+        self.opacity_var = tk.DoubleVar(value=self.bg_opacity)
+        self.opacity_scale = ttk.Scale(opacity_row, from_=0, to=100, orient="horizontal",
+                                       variable=self.opacity_var, style="Dark.Horizontal.TScale",
+                                       command=self._on_opacity)
+        self.opacity_scale.pack(side="left", fill="x", expand=True)
+        self.opacity_label = tk.Label(opacity_row, text=f"{self.bg_opacity}%", bg=PANEL, fg=TEXT,
+                                      font=font(8), width=4, anchor="e")
+        self.opacity_label.pack(side="right")
+
+        # ---- merge
+        self.merge_var = tk.BooleanVar(value=self.merge)
+        ttk.Checkbutton(self.sidebar, text=self._t("merge"), variable=self.merge_var,
+                        style="Dark.TCheckbutton").pack(anchor="w", padx=pad, pady=(0, px(4)))
+
+        # ---- output
         out_row = tk.Frame(self.sidebar, bg=PANEL)
-        out_row.pack(fill="x", padx=pad, pady=(px(6), 0))
-        tk.Label(out_row, text=text(self.lang, "output"), bg=PANEL, fg=MUTED,
+        out_row.pack(fill="x", padx=pad, pady=(px(2), 0))
+        tk.Label(out_row, text=self._t("output"), bg=PANEL, fg=MUTED,
                  font=font(8)).pack(side="left")
         self.out_var = tk.StringVar(value=self._out_text())
         tk.Label(out_row, textvariable=self.out_var, bg=PANEL, fg=TEXT, font=font(8),
                  anchor="w").pack(side="left", padx=(px(6), 0), fill="x", expand=True)
-        self._button(out_row, text(self.lang, "change"), self.choose_out_dir, kind="ghost",
+        self._button(out_row, self._t("change"), self.choose_out_dir, kind="ghost",
                      padx_=px(6), pady=px(1)).pack(side="right")
         self._button(out_row, self._t("reset"), self.reset_out_dir,
                      kind="ghost", padx_=px(6), pady=px(1)).pack(side="right", padx=(0, px(2)))
+
+    # ------------------------------------------------------------ axis / palette
+    def _available_axes(self) -> set:
+        if not self.inputs:
+            return set()
+        groups = core.group_files(core.collect_inputs(self.inputs))
+        available = set()
+        for group in groups:
+            available.update(group["axes"].keys())
+        return available
+
+    def _selected_axes(self) -> set:
+        return set(self.axes_enabled) & self._available_axes()
+
+    def _refresh_axis_chips(self):
+        if not hasattr(self, "axis_buttons"):
+            return
+        available = self._available_axes()
+        for name, button in self.axis_buttons.items():
+            if name not in available:
+                button.configure(state="disabled", bg=CARD, fg=DIM,
+                                 disabledforeground=DIM, cursor="")
+                continue
+            on = name in self.axes_enabled
+            button.configure(
+                state="normal", cursor="hand2",
+                bg=ACCENT if on else "#262a31",
+                fg="#04252a" if on else MUTED,
+                activebackground=ACCENT if on else "#333842",
+                activeforeground="#04252a" if on else TEXT,
+            )
+        selected = len(self._selected_axes())
+        self.axes_hint.configure(text=self._t("axes_selected", n=selected) if available else "")
+
+    def _toggle_axis(self, name: str):
+        if name in self.axes_enabled:
+            self.axes_enabled.discard(name)
+        else:
+            self.axes_enabled.add(name)
+        self._save_ui_settings()
+        self._refresh_axis_chips()
+
+    def _palette_key(self) -> str:
+        label = self.palette_var.get()
+        for key in core.PALETTES:
+            if core.palette_label(key, self.lang) == label:
+                return key
+        return core.DEFAULT_PALETTE
+
+    def _draw_palette_chip(self):
+        chip = getattr(self, "palette_chip", None)
+        if chip is None:
+            return
+        chip.delete("all")
+        width = px(52)
+        height = px(14)
+        stops = core.palette_stops(self.palette)
+        steps = 16
+        for index in range(steps):
+            colour = core.color_at((index + 0.5) / steps, stops)
+            chip.create_rectangle(index * width / steps, 0, (index + 1) * width / steps, height,
+                                  fill="#{:02x}{:02x}{:02x}".format(*colour), width=0)
+
+    def _on_palette(self):
+        self.palette = self._palette_key()
+        self._save_ui_settings()
+        self._draw_palette_chip()
+
+    def _on_opacity(self, value):
+        try:
+            self.bg_opacity = max(0, min(100, int(round(float(value)))))
+        except (TypeError, ValueError):
+            return
+        if hasattr(self, "opacity_label"):
+            self.opacity_label.configure(text=f"{self.bg_opacity}%")
+        self._save_ui_settings()
+
+    def _save_ui_settings(self):
+        self.settings.update(
+            language=self.lang,
+            width=self.width,
+            palette=self.palette,
+            bg_opacity=self.bg_opacity,
+            axes=sorted(self.axes_enabled),
+            merge=self.merge,
+        )
+        save_settings(self.settings)
 
     def _build_preview(self):
         toolbar = tk.Frame(self.preview, bg=PANEL)
@@ -586,9 +751,10 @@ class App:
         groups = core.group_files(core.collect_inputs(self.inputs)) if self.inputs else []
         scripts = len(core.collect_inputs(self.inputs)) if self.inputs else 0
         if not self.inputs:
-            self.summary_var.set(text(self.lang, "summary_empty"))
+            self.summary_var.set(self._t("summary_empty"))
         else:
-            self.summary_var.set(text(self.lang, "summary", n=len(self.inputs), m=scripts, k=len(groups)))
+            self.summary_var.set(self._t("summary", n=len(self.inputs), m=scripts, k=len(groups)))
+        self._refresh_axis_chips()
 
     def _on_select(self, _event=None):
         selection = self.listbox.curselection()
@@ -656,27 +822,36 @@ class App:
         if self.busy:
             return
         if not self.inputs:
-            self.status_var.set(text(self.lang, "no_input"))
-            self._log(text(self.lang, "no_input"), "warn")
+            self.status_var.set(self._t("no_input"))
+            self._log(self._t("no_input"), "warn")
             return
         try:
             width = int(self.width_var.get().strip())
         except ValueError:
             width = -1
         if not core.MIN_WIDTH <= width <= core.MAX_WIDTH:
-            message = text(self.lang, "invalid_width", min=core.MIN_WIDTH, max=core.MAX_WIDTH)
+            message = self._t("invalid_width", min=core.MIN_WIDTH, max=core.MAX_WIDTH)
             self.status_var.set(message)
             self._log(message, "err")
             return
+
         self.width = width
-        self.transparent = bool(self.transparent_var.get())
-        self.settings.update(width=self.width, transparent=self.transparent)
-        save_settings(self.settings)
+        self.bg_opacity = max(0, min(100, int(round(self.opacity_var.get()))))
+        self.palette = self._palette_key()
+        self.merge = bool(self.merge_var.get())
+        self._save_ui_settings()
+
+        enabled = self._selected_axes()
+        if not enabled:
+            message = self._t("no_axis")
+            self.status_var.set(message)
+            self._log(message, "warn")
+            return
 
         files = core.collect_inputs(self.inputs)
         if not files:
-            self.status_var.set(text(self.lang, "no_scripts"))
-            self._log(text(self.lang, "no_scripts"), "warn")
+            self.status_var.set(self._t("no_scripts"))
+            self._log(self._t("no_scripts"), "warn")
             return
         groups = core.group_files(files)
         out_dir = self._out_dir()
@@ -684,27 +859,49 @@ class App:
         self.busy = True
         self._sync_buttons()
         self.progress.configure(maximum=max(1, len(groups)), value=0)
-        self.status_var.set(text(self.lang, "rendering"))
-        thread = threading.Thread(target=self._work, args=(groups, out_dir, save), daemon=True)
+        self.status_var.set(self._t("rendering"))
+        thread = threading.Thread(
+            target=self._work,
+            args=(groups, out_dir, save, set(enabled), self.palette, self.bg_opacity, self.merge),
+            daemon=True,
+        )
         thread.start()
         self.root.after(60, self._poll)
 
-    def _work(self, groups, out_dir: Path, save: bool):
+    def _work(self, groups, out_dir: Path, save: bool, enabled, palette: str,
+              opacity: int, merge: bool):
         results = []
         for index, group in enumerate(groups, 1):
             try:
-                image = core.render_group(group["axes"], self.width, self.transparent)
+                image = core.render_group(group["axes"], self.width, bg_opacity=opacity,
+                                          palette=palette, enabled=enabled)
                 path = None
                 if save:
-                    name = f"{group['name']}_Axes{'_transparent' if self.transparent else ''}.png"
-                    path = out_dir / name
+                    suffix = "" if opacity >= 100 else f"_bg{opacity}"
+                    path = out_dir / f"{group['name']}_Axes{suffix}.png"
                     atomic_save(image, path)
-                results.append({"label": group["label"], "image": image, "path": path, "ok": True})
-                self.queue.put(("log", text(self.lang, "done_group",
-                                            label=group["label"], name=path.name if path else "preview"), "ok"))
+
+                merged_path = None
+                if save and merge:
+                    try:
+                        data = core.merge_axes(group["axes"], enabled=enabled, title=group["name"])
+                        merged_path = out_dir / f"{group['name']}_merged.funscript"
+                        core.write_funscript(merged_path, data)
+                    except Exception as exc:  # noqa: BLE001
+                        merged_path = None
+                        self.queue.put(("log", text(self.lang, "merge_failed", msg=exc), "err"))
+
+                results.append({"label": group["label"], "image": image, "path": path,
+                                "merged": merged_path, "ok": True})
+                self.queue.put(("log", text(self.lang, "done_group", label=group["label"],
+                                            name=path.name if path else "preview"), "ok"))
+                if merged_path is not None:
+                    self.queue.put(("log", text(self.lang, "merge_done",
+                                                n=len(enabled), name=merged_path.name), "ok"))
             except Exception as exc:  # noqa: BLE001
                 self.queue.put(("log", text(self.lang, "group_failed", label=group["label"], msg=exc), "err"))
-                results.append({"label": group["label"], "image": None, "path": None, "ok": False})
+                results.append({"label": group["label"], "image": None, "path": None,
+                                "merged": None, "ok": False})
             self.queue.put(("progress", index, len(groups)))
         self.queue.put(("done", results, out_dir, save))
 
@@ -807,6 +1004,8 @@ class App:
 
     def _redraw(self):
         self._redraw_job = None
+        if not getattr(self, "canvas", None) or not self.canvas.winfo_exists():
+            return
         self._draw()
 
     def fit_zoom(self):
@@ -884,16 +1083,30 @@ def selftest(paths) -> int:
         print("no .funscript files found")
         return 1
     groups = core.group_files(files)
-    print(f"files={len(files)} groups={len(groups)}")
+    print(f"files={len(files)} groups={len(groups)} palettes={len(core.PALETTES)}")
     ok = True
     for group in groups:
-        image = core.render_group(group["axes"], core.DEFAULT_WIDTH, False)
+        axes = group["axes"]
+        image = core.render_group(axes, core.DEFAULT_WIDTH, bg_opacity=100)
         alpha = image.convert("RGBA").getchannel("A").getextrema()
         print(f"  {group['label']}: {image.width}x{image.height} alpha={alpha}")
-        transparent = core.render_group(group["axes"], core.DEFAULT_WIDTH, True)
+
+        transparent = core.render_group(axes, core.DEFAULT_WIDTH, bg_opacity=0)
         t_alpha = transparent.getchannel("A").getextrema()
         print(f"  transparent: {transparent.width}x{transparent.height} alpha={t_alpha}")
-        if not (image.width == core.DEFAULT_WIDTH and alpha[0] == 255 and t_alpha[0] == 0):
+
+        half = core.render_group(axes, core.DEFAULT_WIDTH, bg_opacity=50)
+        print(f"  background 50%: corner alpha={half.getpixel((0, 0))[3]}")
+
+        subset = core.render_group(axes, core.DEFAULT_WIDTH, enabled={"L0"})
+        print(f"  axis filter: {subset.width}x{subset.height}")
+
+        merged = core.merge_axes(axes, enabled=set(axes))
+        print(f"  merged: version={merged['version']} axes={[axis['id'] for axis in merged['axes']]}")
+
+        if not (image.width == core.DEFAULT_WIDTH and alpha[0] == 255
+                and t_alpha[0] == 0 and half.getpixel((0, 0))[3] == 127
+                and subset.height == core.TOP_MARGIN + core.ROW_HEIGHT):
             ok = False
     print("selftest", "OK" if ok else "FAILED")
     return 0 if ok else 1

@@ -1,13 +1,13 @@
-# -*- mode: python ; coding: utf-8 -*-
+﻿# -*- mode: python ; coding: utf-8 -*-
 # MHeatmap — build:  py -3 -m PyInstaller --noconfirm MHeatmap.spec
 from PyInstaller.utils.win32.versioninfo import (
     FixedFileInfo, StringFileInfo, StringStruct, StringTable, VarFileInfo, VarStruct, VSVersionInfo,
 )
 
 app_name = "MHeatmap"
-release_version = "1.0.0"
+release_version = "1.1.0"
 fixed = FixedFileInfo(
-    filevers=(1, 0, 0, 0), prodvers=(1, 0, 0, 0), mask=0x3f, flags=0,
+    filevers=(1, 1, 0, 0), prodvers=(1, 1, 0, 0), mask=0x3f, flags=0,
     OS=0x40004, fileType=1, subtype=0, date=(0, 0),
 )
 version = VSVersionInfo(
