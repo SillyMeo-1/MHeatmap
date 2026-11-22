@@ -72,18 +72,12 @@ MHeatmap/
   the other channels with `id` + `actions`) without generating any PNG.
 - **Background opacity slider**: 0 % = fully transparent PNG, 100 % = solid,
   values in between work too; output names carry `_bg<value>` when it is not 100.
-- **One palette** — the OFS rainbow ramp (the extra palettes were removed on request).
+- **One palette** — the OFS rainbow ramp.
 - **Interactive UI**: rounded buttons and pills with hover/press states, a card
   layout, mint accent, a status dot that pulses while working, and toast messages
   for copy / save / merge.
 - **English + 中文 UI**, English by default, first launch asks for the language.
 - **Single-file Windows build**: no installer, no Python.
-
-## Naming
-
-The original request was “M funscript Heatmap Generate”; shortened to **MHeatmap**
-(the “M” is kept, everything else is implied by the subtitle *Funscript Heatmap
-Generator*). It is short enough for an exe name, a window title and a taskbar label.
 
 ## Run / build
 
