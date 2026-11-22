@@ -1,5 +1,8 @@
 # MHeatmap
 
+[![build](https://github.com/SillyMeo-1/MHeatmap/actions/workflows/build.yml/badge.svg)](https://github.com/SillyMeo-1/MHeatmap/actions/workflows/build.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Funscript Heatmap Generator** — a small desktop app that turns `.funscript`
 files into one row-per-axis heatmap (filename banner, speed stats, heat band,
 speed curve), with optional transparent background.
