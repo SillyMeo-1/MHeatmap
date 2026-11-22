@@ -74,7 +74,7 @@ def test_core():
     check("只剩一套配色", list(core.PALETTES) == ["ofs"], str(list(core.PALETTES)))
 
 
-def test_render():
+def test_render(work: Path):
     print("\n[2] 渲染 / 背景透明度 / 轴筛选")
     files = core.collect_inputs([SAMPLES])
     axes = core.group_files(files)[0]["axes"]
@@ -101,6 +101,24 @@ def test_render():
     except ValueError:
         none_error = True
     check("一个轴都不选时报错", none_error)
+
+    # 曲线配色：静止段必须是青色而不是黑色（旧 bug 用了热力色板）
+    flat_path = work / "flat.funscript"
+    flat_actions = [{"at": i * 500, "pos": 50 if (i // 2) % 2 == 0 else 20} for i in range(120)]
+    flat_path.write_text(json.dumps({"version": "1.0", "actions": flat_actions},
+                                    ensure_ascii=False), encoding="utf-8")
+    flat_image = core.render_group({"L0": flat_path}, 900)
+    pixels = flat_image.convert("RGB").load()
+    curve_colors = []
+    for y in range(core.TOP_MARGIN + 62, core.TOP_MARGIN + 100):
+        for x in range(100, 890):
+            red, green, blue = pixels[x, y]
+            if red + green + blue > 150:
+                curve_colors.append((red, green, blue))
+    check("静止段曲线不是黑色", len(curve_colors) > 50, str(len(curve_colors)))
+    check("静止段曲线是青色系",
+          any(green > 110 and blue > 50 and red < 90 for red, green, blue in curve_colors),
+          str(curve_colors[:3]))
 
     single = core.render_group({"L0": axes["L0"]}, 1380)
     check("单轴只画一行", single.size == (1380, 108), str(single.size))
@@ -259,7 +277,7 @@ def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="mheatmap-test-"))
     print(f"临时目录：{work}")
     test_core()
-    test_render()
+    test_render(work)
     test_merge(work)
     test_i18n()
     test_ui(work)

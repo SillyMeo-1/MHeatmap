@@ -17,7 +17,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 APP_NAME = "MHeatmap"
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 # ------------------------------------------------------------------ geometry
 TOP_MARGIN = 4
@@ -479,7 +479,7 @@ def render_group(axes: dict[str, Path], width: int = DEFAULT_WIDTH, bg_opacity: 
 
         draw_stats(image, plot_x + plot_w - stats_w - 4, y + 2, stats_w, actions, use_duration)
         draw_curve(image, actions, use_duration, plot_x, y + BAND_HEIGHT + 4, plot_w,
-                   ROW_HEIGHT - BAND_HEIGHT - 8, max_speed, stops)
+                   ROW_HEIGHT - BAND_HEIGHT - 8, max_speed)
         draw.line((plot_x, y + ROW_HEIGHT - 1, plot_x + plot_w, y + ROW_HEIGHT - 1),
                   fill=(0, 150, 170, 255), width=1)
 
