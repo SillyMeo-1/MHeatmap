@@ -132,31 +132,22 @@ table and the real Tk flow (preview → save → copy → merge → switch langu
 
 ## Changelog
 
-### 1.2.2 (latest)
+### 1.2.3 (latest)
 
-Changes since 1.0.0:
+- Merged `.funscript` now uses the funscript 1.1 layout of the reference tool:
+  every action is an `{at, pos}` object, `metadata.duration` is in seconds, and the
+  default `inverted` / `range` fields are not written. Files merged with 1.2.2 or
+  older load as a script that never moves — regenerate them.
+- Checks now assert the merged structure: `{at, pos}` objects, monotonic
+  timestamps, positions 0–100, duration in seconds.
 
-- **Heatmap style** — constant opaque band (alpha 212) so slow segments keep their
-  colour, linear palette lookup, pure-black canvas, a hard 40 px band edge with a
-  21 % tail, and a 2 px speed curve.
-- **Curve colours** — the curve uses the cyan speed ramp: holding = cyan,
-  movement = green/yellow, fast = red/purple. Holding sections used to be drawn
-  black.
-- **Axis selection** — toggle the L0…R2 pills; only the chosen axes are drawn and
-  the image height follows.
-- **Background opacity** — slider 0–100 %; output names carry `_bg<value>` when it
-  is not 100.
-- **Copy image** (`Ctrl+C`) — the clipboard receives CF_DIB and PNG.
-- **Merge .funscript** (`Ctrl+M`) — writes the single-file multi-axis script
-  (funscript 1.1) without generating any PNG.
-- **New UI** — rounded pills with hover/press feedback, card layout, pulsing status
-  dot, toast messages, double-click-to-fit preview.
-- Single OFS palette; English + 中文 with a first-run language picker.
+### 1.2.2
 
-### 1.0.0
-
-- First public release: row-per-axis heatmap, bilingual UI with first-run language
-  picker, drag & drop, transparent PNG, single-file Windows exe.
+- Speed curve uses the cyan speed ramp, so holding sections are cyan instead of
+  black lines.
+- Heat band drawn at a constant opacity with a linear palette lookup on a black
+  canvas, hard band edge, 2 px curve.
+- Preview re-fits once the layout settles.
 
 ## Notes
 
