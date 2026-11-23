@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import ast
 import ctypes
 import json
 import os
@@ -29,6 +30,32 @@ def check(name: str, condition, detail: str = "") -> None:
     print(("  ok   " if condition else "  FAIL ") + name + (f"  [{detail}]" if detail else ""))
     if not condition:
         FAILS.append(name)
+
+
+def curve_calls_with_stops(path: Path) -> list[int]:
+    """AST 扫描：给 draw_curve 传 stops（第 9 个位置参数或关键字）的调用点都算回归。"""
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"))  # core.py 带 BOM
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        if name != "draw_curve":
+            continue
+        if len(node.args) > 8 or any(keyword.arg == "stops" for keyword in node.keywords):
+            hits.append(node.lineno)
+    return hits
+
+
+def curve_pixels(image) -> list[tuple[int, int, int]]:
+    """透明底下按 alpha 找出曲线像素，避免把黑底当成黑线。"""
+    pixels = image.load()
+    top = core.TOP_MARGIN + core.BAND_HEIGHT + 4
+    return [pixels[x, y][:3]
+            for y in range(top, top + 40)
+            for x in range(core.AXIS_COLUMN + 2, image.size[0] - 6)
+            if pixels[x, y][3] > 40]
 
 
 def write_settings(**values) -> None:
@@ -102,23 +129,44 @@ def test_render(work: Path):
         none_error = True
     check("一个轴都不选时报错", none_error)
 
-    # 曲线配色：静止段必须是青色而不是黑色（旧 bug 用了热力色板）
-    flat_path = work / "flat.funscript"
-    flat_actions = [{"at": i * 500, "pos": 50 if (i // 2) % 2 == 0 else 20} for i in range(120)]
-    flat_path.write_text(json.dumps({"version": "1.0", "actions": flat_actions},
+    # 曲线配色回归防线：按住不动的段必须是青色，绝不能黑（1.2.1 把热力色板喂给曲线，
+    # OFS 强度 0 是纯黑，静止段整段变黑）。透明底 + alpha 隔离曲线像素，黑底不会冒充黑线。
+    hold_actions = [{"at": 0, "pos": 50}, {"at": 6000, "pos": 50},
+                    {"at": 6400, "pos": 10}, {"at": 12000, "pos": 10}]
+    hold_path = work / "hold.funscript"
+    hold_path.write_text(json.dumps({"version": "1.0", "actions": hold_actions},
                                     ensure_ascii=False), encoding="utf-8")
-    flat_image = core.render_group({"L0": flat_path}, 900)
-    pixels = flat_image.convert("RGB").load()
-    curve_colors = []
-    for y in range(core.TOP_MARGIN + 62, core.TOP_MARGIN + 100):
-        for x in range(100, 890):
-            red, green, blue = pixels[x, y]
-            if red + green + blue > 150:
-                curve_colors.append((red, green, blue))
-    check("静止段曲线不是黑色", len(curve_colors) > 50, str(len(curve_colors)))
-    check("静止段曲线是青色系",
-          any(green > 110 and blue > 50 and red < 90 for red, green, blue in curve_colors),
-          str(curve_colors[:3]))
+    hold_image = core.render_group({"L0": hold_path}, 900, bg_opacity=0)
+    colours = curve_pixels(hold_image)
+    black = [colour for colour in colours if sum(colour) < 60]
+    cyan = [colour for colour in colours if colour[1] > 120 and colour[2] > 120 and colour[0] < 90]
+    check("静止段曲线画得出来", len(colours) > 200, str(len(colours)))
+    check("静止段曲线不是黑色", len(black) * 50 <= len(colours),
+          f"black={len(black)}/{len(colours)}")
+    check("静止段曲线是青色系", len(cyan) * 2 > len(colours),
+          f"cyan={len(cyan)}/{len(colours)}")
+    check("draw_curve 默认用速度色阶",
+          core.draw_curve.__defaults__[-1] is core.CURVE_PALETTE,
+          str(core.draw_curve.__defaults__[-1][:1]))
+    leaked = curve_calls_with_stops(ROOT / "mheatmap" / "core.py")
+    check("没有调用点给曲线传 stops", not leaked, str(leaked))
+    check("热力色板仍是 OFS 数据",
+          core.draw_band.__defaults__[0] is core.OFS_STOPS
+          and len(core.OFS_STOPS) == 30
+          and core.OFS_STOPS[0] == (0.0, (0, 0, 0))
+          and core.OFS_STOPS[-1] == (1.0, (87, 70, 0)),
+          str(len(core.OFS_STOPS)))
+    check("曲线色阶与热力色板是两套",
+          core.CURVE_PALETTE is not core.OFS_STOPS
+          and core.CURVE_PALETTE[0][1] == (0, 238, 255),
+          str(core.CURVE_PALETTE[0][1]))
+    # 横幅（BANNER_HEIGHT=44）盖住色带主体，所以在色带下沿取样；
+    # 前 5 秒是纯静止段，这些列的色带 alpha 必须是 0（0 强度不代表黑色块）
+    band_pixels = hold_image.load()
+    held_alpha = [band_pixels[x, core.TOP_MARGIN + 48][3]
+                  for x in range(core.AXIS_COLUMN + 2, 420)]
+    check("静止段热力带不画黑块", all(alpha == 0 for alpha in held_alpha),
+          str(sorted(set(held_alpha))))
 
     single = core.render_group({"L0": axes["L0"]}, 1380)
     check("单轴只画一行", single.size == (1380, 108), str(single.size))
