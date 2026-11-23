@@ -17,7 +17,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 APP_NAME = "MHeatmap"
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 
 # ------------------------------------------------------------------ geometry
 TOP_MARGIN = 4
@@ -492,6 +492,8 @@ def merge_axes(axes: dict[str, Path], enabled=None, title: str = "") -> dict:
 
     The main ``actions`` array is the stroke axis (L0 when selected, otherwise the
     first selected axis); the other axes go into ``axes`` as {id, actions}.
+    Actions are ``{"at": ms, "pos": 0-100}`` objects and ``metadata.duration`` is in
+    seconds, as in the funscript 1.1 layout used by @eroscripts/funlib.
     """
     wanted = set(enabled) if enabled is not None else None
     order = [axis[0] for axis in AXES
@@ -506,19 +508,18 @@ def merge_axes(axes: dict[str, Path], enabled=None, title: str = "") -> dict:
         if axis_name == main_axis:
             continue
         actions, axis_duration = read_funscript(axes[axis_name])
-        others.append({"id": axis_name, "actions": [[int(at), int(pos)] for at, pos in actions]})
+        others.append({"id": axis_name,
+                      "actions": [{"at": int(at), "pos": int(pos)} for at, pos in actions]})
         duration = max(duration, axis_duration)
 
     data = {
+        # 与 @eroscripts/funlib 的 1.1 输出一致：默认值 inverted/range 不写
         "version": "1.1",
-        "inverted": False,
-        "range": 100,
-        "actions": [[int(at), int(pos)] for at, pos in main_actions],
+        "actions": [{"at": int(at), "pos": int(pos)} for at, pos in main_actions],
         "axes": others,
         "metadata": {
             "title": title or Path(axes[main_axis]).stem,
-            "duration": int(round(duration)),
-            "generator": f"{APP_NAME} {VERSION}",
+            "duration": round(duration / 1000.0, 3),
         },
     }
     return data

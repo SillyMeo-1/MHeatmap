@@ -69,7 +69,8 @@ MHeatmap/
   CF_DIB **and** PNG, so Paint, Word, browsers and chat apps all paste it.
 - **Merge .funscript** is its own button: it only writes
   `xxx_merged.funscript` (funscript **1.1** — `actions` = stroke axis, `axes` =
-  the other channels with `id` + `actions`) without generating any PNG.
+  the other channels with `id` + `actions`; every action is an `{at, pos}` object
+  and `metadata.duration` is in seconds) without generating any PNG.
 - **Background opacity slider**: 0 % = fully transparent PNG, 100 % = solid,
   values in between work too; output names carry `_bg<value>` when it is not 100.
 - **One palette** — the OFS rainbow ramp.

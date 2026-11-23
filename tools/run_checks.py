@@ -185,12 +185,34 @@ def test_merge(work: Path):
     check("附加轴 id 正确", [axis["id"] for axis in data["axes"]] == ["R0", "R1", "R2"],
           str([axis["id"] for axis in data["axes"]]))
     check("附加轴带 actions", all(axis["actions"] for axis in data["axes"]))
-    check("metadata 记录生成器", data["metadata"]["generator"].startswith("MHeatmap"))
+    check("轴对象只有 id/actions", all(set(axis) == {"id", "actions"} for axis in data["axes"]),
+          str([sorted(axis) for axis in data["axes"]]))
+
+    # funscript 1.1：actions 必须是 {"at","pos"} 对象，duration 是秒
+    def action_ok(items):
+        return all(isinstance(item, dict) and set(item) == {"at", "pos"}
+                   and isinstance(item["at"], int) and isinstance(item["pos"], int)
+                   for item in items)
+
+    check("主轴 actions 是 at/pos 对象", action_ok(data["actions"]), str(data["actions"][:1]))
+    check("附加轴 actions 是 at/pos 对象",
+          all(action_ok(axis["actions"]) for axis in data["axes"]))
+    main_times = [item["at"] for item in data["actions"]]
+    check("时间单调不回退", all(a <= b for a, b in zip(main_times, main_times[1:])))
+    check("位置在 0-100", all(0 <= item["pos"] <= 100 for item in data["actions"]))
+    check("metadata.duration 用秒", abs(data["metadata"]["duration"] - 880.0) < 1.0,
+          str(data["metadata"]["duration"]))
+    check("metadata 不写生成器", "generator" not in data["metadata"], str(list(data["metadata"])))
 
     path = core.write_funscript(work / "demo_merged.funscript", data)
     loaded = json.loads(path.read_text(encoding="utf-8"))
     check("落盘后可解析", loaded["axes"][0]["id"] == "R0" and loaded["actions"])
-    check("actions 是 [at, pos]", loaded["actions"][0] and len(loaded["actions"][0]) == 2)
+    check("落盘后仍是 at/pos 对象", isinstance(loaded["actions"][0], dict)
+          and set(loaded["actions"][0]) == {"at", "pos"}, str(loaded["actions"][0]))
+
+    # 按 @eroscripts/funlib 的解析方式模拟：Object.assign(this, action) 后读 at/pos
+    check("符合 funlib 反序列化前提（对象字段）",
+          all("at" in item and "pos" in item for item in loaded["actions"]))
 
     only = core.merge_axes(axes, enabled={"R1"})
     check("只选一个轴也能合并", only["axes"] == [] and only["version"] == "1.1")
@@ -274,6 +296,9 @@ def test_ui(work: Path):
         data = json.loads(merged[0].read_text(encoding="utf-8"))
         check("合并脚本含选中轴", [a["id"] for a in data["axes"]] == ["R1"],
               str([a["id"] for a in data["axes"]]))
+        check("合并脚本 actions 为对象",
+              isinstance(data["actions"][0], dict) and set(data["actions"][0]) == {"at", "pos"},
+              str(data["actions"][0]))
     check("合并后状态栏有提示", "Merged" in application.status_var.get(), application.status_var.get())
 
     application._switch_language("zh")
