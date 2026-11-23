@@ -34,6 +34,9 @@ jobs:
       - name: Build exe
         run: python -m PyInstaller --noconfirm MHeatmap.spec
 
+      - name: Exe self test
+        run: dist\MHeatmap.exe --selftest build/sample
+
       - name: Package zip
         run: |
           New-Item -ItemType Directory -Force -Path dist/package | Out-Null
