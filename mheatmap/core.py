@@ -9,6 +9,7 @@ the output looks the same.
 """
 from __future__ import annotations
 
+import bisect
 import json
 import math
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 APP_NAME = "MHeatmap"
-VERSION = "1.2.3"
+VERSION = "1.2.4"
 
 # ------------------------------------------------------------------ geometry
 TOP_MARGIN = 4
@@ -344,20 +345,19 @@ def draw_band(image, actions, duration_ms, x, y, width, max_speed, stops=OFS_STO
     """Heat band: one column per pixel, alpha fades out towards the bottom."""
     if len(actions) < 2 or duration_ms <= 0 or width <= 0:
         return
+    # 每一列取「该时刻所在那一段」的速度；不要把跨列的短促段按最大速度糊到整列上
+    times = [item[0] for item in actions]
     speeds = [0.0] * width
-    for (a0, p0), (a1, p1) in zip(actions, actions[1:]):
+    last = len(actions) - 2
+    for column in range(width):
+        moment = (column + 0.5) * duration_ms / width
+        index = bisect.bisect_right(times, moment) - 1
+        index = 0 if index < 0 else min(index, last)
+        a0, p0 = actions[index]
+        a1, p1 = actions[index + 1]
         delta = a1 - a0
-        if delta <= 0:
-            continue
-        speed = abs(p1 - p0) * 1000.0 / delta
-        start = int(a0 * width / duration_ms)
-        end = int(a1 * width / duration_ms)
-        start, end = max(0, min(width - 1, start)), max(0, min(width - 1, end))
-        if end < start:
-            start, end = end, start
-        for column in range(start, end + 1):
-            if speed > speeds[column]:
-                speeds[column] = speed
+        if delta > 0:
+            speeds[column] = abs(p1 - p0) * 1000.0 / delta
 
     columns = []
     for speed in speeds:
@@ -369,12 +369,8 @@ def draw_band(image, actions, duration_ms, x, y, width, max_speed, stops=OFS_STO
         columns.append((color[0], color[1], color[2], BAND_ALPHA))
 
     data = []
-    tail = max(1, BAND_HEIGHT - BAND_SOLID - 1)
     for row in range(BAND_HEIGHT):
-        if row < BAND_SOLID:
-            factor = 1.0
-        else:
-            factor = 1.0 - 0.75 * ((row - BAND_SOLID) / tail)
+        factor = 1.0 if row < BAND_SOLID else BAND_TAIL_ALPHA
         for red, green, blue, alpha in columns:
             data.append((red, green, blue, int(alpha * factor)))
     band = Image.new("RGBA", (width, BAND_HEIGHT))

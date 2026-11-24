@@ -168,6 +168,39 @@ def test_render(work: Path):
     check("静止段热力带不画黑块", all(alpha == 0 for alpha in held_alpha),
           str(sorted(set(held_alpha))))
 
+    # 色带精度：每列必须取「该时刻所在段」的速度，不能把并存的快段按最大值糊到整列
+    dense, at, pos, flip = [], 0, 50, 1
+    for index in range(100):
+        dense.append((at, pos))
+        pos = pos + (1 if index % 2 == 0 else 6) * flip
+        if pos > 95 or pos < 5:
+            flip = -flip
+            pos = max(0, min(100, pos))
+        at += 10
+    band_image = core.Image.new("RGBA", (100, core.BAND_HEIGHT), (0, 0, 0, 0))
+    core.draw_band(band_image, dense, 1000, 0, 0, 100,
+                   core.DEFAULT_MAX_SPEED, core.OFS_STOPS, 1.0)
+    bad = 0
+    for column in range(99):
+        moment = (column + 0.5) * 1000 / 100
+        seg = min(len(dense) - 2, int(moment // 10))
+        dt = dense[seg + 1][0] - dense[seg][0]
+        speed = abs(dense[seg + 1][1] - dense[seg][1]) * 1000.0 / dt if dt > 0 else 0
+        if speed <= 0:
+            continue
+        expected = core.color_at(core.clamp(speed / core.DEFAULT_MAX_SPEED, 0, 1), core.OFS_STOPS)
+        actual = band_image.getpixel((column, 10))
+        if max(abs(a - b) for a, b in zip(actual[:3], expected)) > 2:
+            bad += 1
+    check("色带按时间采样（不被相邻快段抬高）", bad == 0, f"{bad} bad columns")
+    fast_column = max(range(99), key=lambda c: abs(
+        dense[min(len(dense) - 2, int(((c + 0.5) * 10) // 10)) + 1][1]
+        - dense[min(len(dense) - 2, int(((c + 0.5) * 10) // 10))][1]))
+    check("色带尾部是硬边 21%",
+          band_image.getpixel((fast_column, 10))[3] == core.BAND_ALPHA
+          and band_image.getpixel((fast_column, 50))[3] == int(core.BAND_ALPHA * core.BAND_TAIL_ALPHA),
+          f"{band_image.getpixel((fast_column, 10))[3]}/{band_image.getpixel((fast_column, 50))[3]}")
+
     single = core.render_group({"L0": axes["L0"]}, 1380)
     check("单轴只画一行", single.size == (1380, 108), str(single.size))
     check("宽度可调", core.render_group(axes, 3000).size == (3000, 628))
